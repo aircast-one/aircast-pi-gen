@@ -13,7 +13,7 @@ on:
       - develop
 
   repository_dispatch:
-    types: [build-image, build-production-image, build-testing-image]
+    types: [build-development-image, build-production-image, build-testing-image]
 
   workflow_dispatch:
     inputs:
@@ -66,7 +66,7 @@ jobs:
             # Determine distribution from event type or payload
             EVENT_TYPE="${{ github.event.action }}"
             case "$EVENT_TYPE" in
-              "build-image")
+              "build-development-image")
                 DISTRIBUTION="development"
                 ;;
               "build-testing-image")
