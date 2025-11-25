@@ -7,19 +7,18 @@ permissions:
   repository-projects: write
 
 on:
-  # Trigger on push to main branch
   push:
     branches:
       - main
+      - develop
 
-  # Trigger from aircast-agent webhook
   repository_dispatch:
-    types: [build-production-image, build-testing-image]
+    types: [build-image, build-production-image, build-testing-image]
 
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version (e.g., v1.0.0 or v1.0.0-rc.1)'
+        description: 'Version (e.g., v1.0.0, v1.0.0-rc.1, v1.0.0-dev.1)'
         required: true
         type: string
       distribution:
@@ -29,6 +28,7 @@ on:
         options:
           - stable
           - testing
+          - development
         default: stable
 
 env:
@@ -40,6 +40,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
+      runner_label: ${{ steps.version.outputs.runner_label }}
+      environment: ${{ steps.version.outputs.environment }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,37 +49,68 @@ jobs:
       - name: Determine version and distribution
         id: version
         run: |
+          # Determine distribution based on trigger
           if [ "${{ github.event_name }}" == "push" ]; then
-            # For branch pushes, generate version from commit SHA
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            VERSION="v1.1.3.${SHORT_SHA}"
-            DISTRIBUTION="stable"
-          elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            # For webhook triggers from aircast-agent
-            VERSION="${{ github.event.client_payload.version }}"
-            DISTRIBUTION="${{ github.event.client_payload.distribution }}"
-
-            # Default to stable if not provided
-            if [ -z "$DISTRIBUTION" ]; then
+            if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+              DISTRIBUTION="development"
+              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              VERSION="v0.0.0-dev.${SHORT_SHA}"
+            else
               DISTRIBUTION="stable"
+              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              VERSION="v1.1.3.${SHORT_SHA}"
             fi
+          elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            VERSION="${{ github.event.client_payload.version }}"
+
+            # Determine distribution from event type or payload
+            EVENT_TYPE="${{ github.event.action }}"
+            case "$EVENT_TYPE" in
+              "build-image")
+                DISTRIBUTION="development"
+                ;;
+              "build-testing-image")
+                DISTRIBUTION="testing"
+                ;;
+              "build-production-image")
+                DISTRIBUTION="stable"
+                ;;
+              *)
+                # Fallback to payload distribution or stable
+                DISTRIBUTION="${{ github.event.client_payload.distribution }}"
+                if [ -z "$DISTRIBUTION" ]; then
+                  DISTRIBUTION="stable"
+                fi
+                ;;
+            esac
 
             echo "Triggered by webhook from: ${{ github.event.client_payload.trigger }}"
             echo "Agent version: $VERSION"
           else
-            # For manual dispatch, use the inputs
+            # Manual dispatch
             VERSION="${{ inputs.version }}"
             DISTRIBUTION="${{ inputs.distribution }}"
           fi
 
+          # Set runner label and environment based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            RUNNER_LABEL="development"
+            ENVIRONMENT="development"
+          else
+            RUNNER_LABEL="production"
+            ENVIRONMENT="production"
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
-          echo "Building $VERSION for $DISTRIBUTION channel"
+          echo "runner_label=$RUNNER_LABEL" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "Building $VERSION for $DISTRIBUTION channel (runner: $RUNNER_LABEL, env: $ENVIRONMENT)"
 
   build:
     needs: prepare
-    runs-on: [self-hosted, production]
-    environment: production
+    runs-on: [self-hosted, "${{ needs.prepare.outputs.runner_label }}"]
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Checkout repository
@@ -126,7 +159,7 @@ jobs:
           TARGET_HOSTNAME=aircast
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           EOF
-          
+
           echo "Configuration created"
 
       - name: Cache Docker data
@@ -167,14 +200,14 @@ jobs:
           echo "Event: ${{ github.event_name }}"
           echo "Cache hits:"
           echo "  - Pi-gen artifacts: ${{ steps.cache-pigen.outputs.cache-hit }}"
-          
+
           # Create SKIP files for cached stages to optimize build
           if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
             echo "Cached pi-gen artifacts found - enabling incremental build"
             # The build scripts will handle SKIP file creation
             export USE_CACHED_STAGES=1
           fi
-          
+
           # Use GitHub-optimized build script if available
           if [ -f ./build-docker-github.sh ]; then
             ./build-docker-github.sh
@@ -182,7 +215,7 @@ jobs:
             # Fallback to regular build
             ./build-docker.sh
           fi
-          
+
           echo "Build completed successfully!"
 
       - name: Build Statistics
@@ -190,7 +223,7 @@ jobs:
         run: |
           echo "Build Statistics:"
           echo "==================="
-          
+
           # Check cache hit rate and estimate time savings
           if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
             echo "Incremental build: YES (cached artifacts available)"
@@ -199,7 +232,7 @@ jobs:
             echo "Full build: YES (no cache available)"
             echo "No cache benefit this run"
           fi
-          
+
           # Show stage sizes
           echo ""
           echo "Stage sizes:"
@@ -209,7 +242,7 @@ jobs:
               echo "  - $stage: $SIZE"
             fi
           done
-          
+
           # Show build logs
           if [ -f deploy/build-docker.log ]; then
             echo ""
@@ -221,30 +254,30 @@ jobs:
         id: artifacts
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          
+
           # Find the generated image
           IMAGE_PATH=$(find deploy -name "*.zip" -o -name "*.img" -o -name "*.img.gz" -o -name "*.img.xz" | head -n 1)
-          
+
           if [ -z "$IMAGE_PATH" ]; then
             echo "No image found in deploy directory"
             exit 1
           fi
-          
+
           echo "Found image: $IMAGE_PATH"
-          
+
           # Get the file extension
           EXT="${IMAGE_PATH##*.}"
-          
+
           # Rename to include version
           NEW_NAME="aircast-rpi-arm64-${VERSION}.${EXT}"
           cp "$IMAGE_PATH" "$NEW_NAME"
-          
+
           echo "image_path=$NEW_NAME" >> $GITHUB_OUTPUT
           echo "image_name=$NEW_NAME" >> $GITHUB_OUTPUT
-          
+
           # Create checksums
           sha256sum "$NEW_NAME" > "${NEW_NAME}.sha256"
-          
+
           echo "Prepared artifact: $NEW_NAME"
 
       - name: Upload artifacts
@@ -258,7 +291,7 @@ jobs:
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Download artifacts
@@ -294,7 +327,7 @@ jobs:
             ### Checksums
             SHA256 checksums are provided for verification.
           draft: false
-          prerelease: ${{ needs.prepare.outputs.distribution == 'testing' }}
+          prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
           files: |
             aircast-rpi-arm64-*.zip
             aircast-rpi-arm64-*.img
@@ -349,6 +382,13 @@ jobs:
           S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
           echo "Uploading to S3 ($S3_PATH)..."
 
+          # Determine CloudFront domain based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+          else
+            DOWNLOADS_DOMAIN="downloads.aircast.one"
+          fi
+
           # Upload all image files and checksums
           for file in aircast-rpi-arm64-*; do
             if [ -f "$file" ]; then
@@ -367,7 +407,7 @@ jobs:
             "created_at": "$CREATED_AT",
             "release_notes": $(echo "$RELEASE_BODY" | jq -Rs .),
             "github_release_id": "$RELEASE_ID",
-            "mirror_url": "https://downloads.aircast.one/$DISTRIBUTION/images/$VERSION/",
+            "mirror_url": "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/",
             "mirrored_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
@@ -391,7 +431,7 @@ jobs:
           done
 
           echo "[OK] Mirror complete!"
-          echo "Mirror URL: https://downloads.aircast.one/$DISTRIBUTION/images/$VERSION/"
+          echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/"
 
           cd ..
           rm -rf temp-assets
@@ -402,13 +442,20 @@ jobs:
           DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
           echo "Invalidating CloudFront cache..."
 
-          # Find CloudFront distribution for downloads.aircast.one
+          # Determine CloudFront domain based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            CF_DOMAIN="downloads.dev.aircast.one"
+          else
+            CF_DOMAIN="downloads.aircast.one"
+          fi
+
+          # Find CloudFront distribution
           CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(Aliases.Items, 'downloads.aircast.one')].Id" \
+            --query "DistributionList.Items[?contains(Aliases.Items, '$CF_DOMAIN')].Id" \
             --output text)
 
           if [ -z "$CF_DISTRIBUTION_ID" ]; then
-            echo "[WARN] Could not find CloudFront distribution for downloads.aircast.one"
+            echo "[WARN] Could not find CloudFront distribution for $CF_DOMAIN"
           else
             echo "Found CloudFront distribution: $CF_DISTRIBUTION_ID"
 
@@ -454,12 +501,19 @@ jobs:
           echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # Determine downloads domain
+          if [ "$DISTRIBUTION" == "development" ]; then
+            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+          else
+            DOWNLOADS_DOMAIN="downloads.aircast.one"
+          fi
+
           if [ "${{ needs.release.result }}" == "success" ]; then
             echo "### Release Published" >> $GITHUB_STEP_SUMMARY
             echo "- **GitHub Release:** https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ needs.mirror-to-s3.result }}" == "success" ]; then
-              echo "- **S3 Mirror:** https://downloads.aircast.one/$DISTRIBUTION/images/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
-              echo "- **Latest ($DISTRIBUTION):** https://downloads.aircast.one/$DISTRIBUTION/images/latest.txt" >> $GITHUB_STEP_SUMMARY
+              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+              echo "- **Latest ($DISTRIBUTION):** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/latest.txt" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "### Build Failed" >> $GITHUB_STEP_SUMMARY
