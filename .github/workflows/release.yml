@@ -98,10 +98,10 @@ jobs:
 
           # Set runner label and environment based on distribution
           if [ "$DISTRIBUTION" == "development" ]; then
-            RUNNER_LABEL="development"
+            RUNNER_LABEL="dev"
             ENVIRONMENT="development"
           else
-            RUNNER_LABEL="production"
+            RUNNER_LABEL="prod"
             ENVIRONMENT="production"
           fi
 
