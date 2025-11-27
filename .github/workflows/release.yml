@@ -123,21 +123,22 @@ jobs:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-v1
-          restore-keys: |
-            apt-${{ runner.os }}-
-
-      - name: Install dependencies
+      - name: Verify dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            coreutils quilt parted qemu-user-static debootstrap zerofree zip \
-            dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
-            gpg pigz xxd arch-test bmap-tools
+          echo "Verifying pre-installed dependencies..."
+          DEPS="coreutils quilt parted qemu-user-static debootstrap zerofree zip dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc gpg pigz xxd arch-test bmap-tools"
+          MISSING=""
+          for dep in $DEPS; do
+            if ! dpkg -l | grep -qw "$dep"; then
+              MISSING="$MISSING $dep"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "Installing missing dependencies:$MISSING"
+            sudo apt-get update && sudo apt-get install -y $MISSING
+          else
+            echo "All dependencies pre-installed"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -166,28 +167,6 @@ jobs:
 
           echo "Configuration created"
 
-      - name: Cache Docker data
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.docker
-          key: docker-${{ runner.os }}-v1
-          restore-keys: |
-            docker-${{ runner.os }}-
-
-      - name: Cache pi-gen build artifacts
-        uses: actions/cache@v4
-        id: cache-pigen
-        with:
-          path: |
-            work
-            deploy
-            .build-cache
-          key: pi-gen-${{ runner.os }}-v1
-          restore-keys: |
-            pi-gen-${{ runner.os }}-
-            pi-gen-
-
       - name: Clean up Docker containers
         run: |
           echo "Cleaning up any existing Docker containers..."
@@ -202,21 +181,12 @@ jobs:
         run: |
           echo "Starting Docker-based build..."
           echo "Event: ${{ github.event_name }}"
-          echo "Cache hits:"
-          echo "  - Pi-gen artifacts: ${{ steps.cache-pigen.outputs.cache-hit }}"
-
-          # Create SKIP files for cached stages to optimize build
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "Cached pi-gen artifacts found - enabling incremental build"
-            # The build scripts will handle SKIP file creation
-            export USE_CACHED_STAGES=1
-          fi
+          echo "Distribution: ${{ needs.prepare.outputs.distribution }}"
 
           # Use GitHub-optimized build script if available
           if [ -f ./build-docker-github.sh ]; then
             ./build-docker-github.sh
           else
-            # Fallback to regular build
             ./build-docker.sh
           fi
 
@@ -227,17 +197,7 @@ jobs:
         run: |
           echo "Build Statistics:"
           echo "==================="
-
-          # Check cache hit rate and estimate time savings
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "Incremental build: YES (cached artifacts available)"
-            echo "Estimated time saved: ~30-45 minutes"
-          else
-            echo "Full build: YES (no cache available)"
-            echo "No cache benefit this run"
-          fi
-
-          # Show stage sizes
+          echo "Distribution: ${{ needs.prepare.outputs.distribution }}"
           echo ""
           echo "Stage sizes:"
           for stage in stage0 stage1 stage2 stage3; do
@@ -246,13 +206,6 @@ jobs:
               echo "  - $stage: $SIZE"
             fi
           done
-
-          # Show build logs
-          if [ -f deploy/build-docker.log ]; then
-            echo ""
-            echo "Build time:"
-            grep -E "real|user|sys" deploy/build-docker.log | tail -3 || true
-          fi
 
       - name: Prepare artifacts
         id: artifacts
