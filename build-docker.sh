@@ -57,6 +57,10 @@ CONTINUE=${CONTINUE:-0}
 PRESERVE_CONTAINER=${PRESERVE_CONTAINER:-0}
 PIGEN_DOCKER_OPTS=${PIGEN_DOCKER_OPTS:-""}
 
+# Support for incremental builds with cached stages
+INCREMENTAL=${INCREMENTAL:-0}
+SKIP_STAGES=${SKIP_STAGES:-""}
+
 if [ -z "${IMG_NAME}" ]; then
 	echo "IMG_NAME not set in 'config'" 1>&2
 	echo 1>&2
@@ -92,6 +96,24 @@ else
   DOCKER_CMDLINE_NAME="${CONTAINER_NAME}"
   DOCKER_CMDLINE_PRE=""
   DOCKER_CMDLINE_POST=""
+fi
+
+# Mount work directory for incremental builds (if it has cached stages)
+WORK_MOUNT=""
+if [ -d "${DIR}/work" ] && [ -f "${DIR}/work/stage0/SKIP" -o -f "${DIR}/work/stage1/SKIP" -o -f "${DIR}/work/stage2/SKIP" ]; then
+  echo "Mounting cached work directory for incremental build..."
+  WORK_MOUNT="-v ${DIR}/work:/pi-gen/work"
+  INCREMENTAL=1
+fi
+
+# Show build mode
+if [ "${INCREMENTAL}" == "1" ]; then
+  echo "Build mode: INCREMENTAL (skipping cached stages)"
+  for stage in ${SKIP_STAGES}; do
+    echo "  - Will skip: $stage"
+  done
+else
+  echo "Build mode: FULL (all stages)"
 fi
 
 # Check if binfmt_misc is required
@@ -136,15 +158,27 @@ time ${DOCKER} run \
   --name "${DOCKER_CMDLINE_NAME}" \
   --privileged \
   ${PIGEN_DOCKER_OPTS} \
+  ${WORK_MOUNT} \
   --volume "${CONFIG_FILE}":/config:ro \
   -e "GIT_HASH=${GIT_HASH}" \
+  -e "SKIP_STAGES=${SKIP_STAGES}" \
   $DOCKER_CMDLINE_POST \
   pi-gen \
   bash -e -o pipefail -c "
     dpkg-reconfigure qemu-user-static &&
     # binfmt_misc is sometimes not mounted with debian bookworm image
     (mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc || true) &&
-    cd /pi-gen; ./build.sh ${BUILD_OPTS} &&
+    cd /pi-gen;
+    # Create SKIP files for incremental builds if SKIP_STAGES is set
+    if [ -n \"\${SKIP_STAGES:-}\" ]; then
+      echo 'Setting up incremental build skip markers...'
+      for stage in \${SKIP_STAGES}; do
+        mkdir -p work/\${stage}
+        touch work/\${stage}/SKIP
+        echo \"  Created SKIP for \${stage}\"
+      done
+    fi
+    ./build.sh ${BUILD_OPTS} &&
     rsync -av work/*/build.log deploy/
   " &
   wait "$!"
@@ -152,6 +186,12 @@ time ${DOCKER} run \
 # Ensure that deploy/ is always owned by calling user
 echo "copying results from deploy/"
 ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/deploy - | tar -xf -
+
+# Copy work directory back for caching (only if not already mounted)
+if [ -z "${WORK_MOUNT}" ]; then
+  echo "copying work directory from container for caching..."
+  ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/work - | tar -xf - 2>/dev/null || true
+fi
 
 echo "copying log from container ${CONTAINER_NAME} to deploy/"
 ${DOCKER} logs --timestamps "${CONTAINER_NAME}" &>deploy/build-docker.log
