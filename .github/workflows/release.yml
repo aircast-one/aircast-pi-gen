@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+      - staging
       - develop
 
   repository_dispatch:
@@ -52,13 +53,15 @@ jobs:
         run: |
           # Determine distribution based on trigger
           if [ "${{ github.event_name }}" == "push" ]; then
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
               DISTRIBUTION="development"
-              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
               VERSION="v0.0.0-dev.${SHORT_SHA}"
+            elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
+              DISTRIBUTION="staging"
+              VERSION="v0.0.0-staging.${SHORT_SHA}"
             else
               DISTRIBUTION="stable"
-              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
               VERSION="v1.1.3.${SHORT_SHA}"
             fi
           elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
@@ -97,13 +100,20 @@ jobs:
           fi
 
           # Set runner label and environment based on distribution
-          if [ "$DISTRIBUTION" == "development" ]; then
-            RUNNER_LABEL="dev"
-            ENVIRONMENT="development"
-          else
-            RUNNER_LABEL="prod"
-            ENVIRONMENT="production"
-          fi
+          case "$DISTRIBUTION" in
+            "development")
+              RUNNER_LABEL="dev"
+              ENVIRONMENT="development"
+              ;;
+            "staging")
+              RUNNER_LABEL="dev"
+              ENVIRONMENT="staging"
+              ;;
+            *)
+              RUNNER_LABEL="prod"
+              ENVIRONMENT="production"
+              ;;
+          esac
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
