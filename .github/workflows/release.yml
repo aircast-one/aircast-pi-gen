@@ -109,14 +109,6 @@ jobs:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-v1
-          restore-keys: |
-            apt-${{ runner.os }}-
-
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -152,27 +144,45 @@ jobs:
 
           echo "Configuration created"
 
-      - name: Cache Docker data
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.docker
-          key: docker-${{ runner.os }}-v1
-          restore-keys: |
-            docker-${{ runner.os }}-
+      - name: Setup persistent cache (self-hosted optimization)
+        id: cache-setup
+        run: |
+          CACHE_BASE=/opt/pi-gen-cache
+          echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
 
-      - name: Cache pi-gen build artifacts
-        uses: actions/cache@v4
-        id: cache-pigen
-        with:
-          path: |
-            work
-            deploy
-            .build-cache
-          key: pi-gen-${{ runner.os }}-v1
-          restore-keys: |
-            pi-gen-${{ runner.os }}-
-            pi-gen-
+          # Ensure cache directory exists with correct permissions
+          sudo mkdir -p "$CACHE_BASE"/{work,apt-archives}
+          sudo chown -R $USER:$USER "$CACHE_BASE"
+
+          # Check if we have valid cached stage2 with rootfs
+          if [ -d "$CACHE_BASE/work/stage2/rootfs" ]; then
+            echo "Found cached stage2 rootfs - enabling incremental build"
+            echo "cache_hit=true" >> $GITHUB_OUTPUT
+
+            # Restore stages using hard links for speed (no copy overhead)
+            mkdir -p work
+            for stage in stage0 stage1 stage2; do
+              if [ -d "$CACHE_BASE/work/$stage" ]; then
+                echo "Restoring $stage from cache (hard links)..."
+                cp -al "$CACHE_BASE/work/$stage" "work/$stage"
+                touch "work/$stage/SKIP"
+                echo "  $stage: $(du -sh work/$stage | cut -f1)"
+              fi
+            done
+
+            # Ensure stage3 doesn't have SKIP file
+            rm -f work/stage3/SKIP 2>/dev/null || true
+          else
+            echo "No valid cache found - will run full build"
+            echo "cache_hit=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Setup apt cache bind mount for debootstrap
+          sudo mkdir -p /var/cache/apt/archives
+          if [ -d "$CACHE_BASE/apt-archives" ] && [ "$(ls -A $CACHE_BASE/apt-archives 2>/dev/null)" ]; then
+            echo "Restoring apt package cache..."
+            sudo cp -n "$CACHE_BASE/apt-archives"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fi
 
       - name: Clean up Docker containers
         run: |
@@ -185,28 +195,50 @@ jobs:
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           PRESERVE_CONTAINER: 1
+          CACHE_HIT: ${{ steps.cache-setup.outputs.cache_hit }}
         run: |
           echo "Starting Docker-based build..."
           echo "Event: ${{ github.event_name }}"
-          echo "Cache hits:"
-          echo "  - Pi-gen artifacts: ${{ steps.cache-pigen.outputs.cache-hit }}"
+          echo "Cache status: $CACHE_HIT"
 
-          # Create SKIP files for cached stages to optimize build
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "Cached pi-gen artifacts found - enabling incremental build"
-            # The build scripts will handle SKIP file creation
-            export USE_CACHED_STAGES=1
-          fi
-
-          # Use GitHub-optimized build script if available
-          if [ -f ./build-docker-github.sh ]; then
-            ./build-docker-github.sh
+          if [ "$CACHE_HIT" == "true" ]; then
+            echo "Running INCREMENTAL build (stage3 only)"
+            export INCREMENTAL=1
+            export SKIP_STAGES="stage0 stage1 stage2"
           else
-            # Fallback to regular build
-            ./build-docker.sh
+            echo "Running FULL build (all stages)"
           fi
+
+          # Run the build
+          ./build-docker.sh
 
           echo "Build completed successfully!"
+
+      - name: Save cache for next build
+        if: success()
+        run: |
+          CACHE_BASE=/opt/pi-gen-cache
+          echo "Saving build artifacts to persistent cache..."
+
+          # Save stage rootfs for incremental builds
+          for stage in stage0 stage1 stage2; do
+            if [ -d "work/$stage/rootfs" ]; then
+              echo "Caching $stage..."
+              mkdir -p "$CACHE_BASE/work/$stage"
+              rsync -a --delete "work/$stage/" "$CACHE_BASE/work/$stage/"
+              echo "  Saved: $(du -sh $CACHE_BASE/work/$stage | cut -f1)"
+            fi
+          done
+
+          # Save apt packages for faster debootstrap
+          if [ -d /var/cache/apt/archives ]; then
+            echo "Caching apt packages..."
+            mkdir -p "$CACHE_BASE/apt-archives"
+            sudo cp -n /var/cache/apt/archives/*.deb "$CACHE_BASE/apt-archives/" 2>/dev/null || true
+            echo "  Cached: $(ls $CACHE_BASE/apt-archives/*.deb 2>/dev/null | wc -l) packages"
+          fi
+
+          echo "Cache saved successfully!"
 
       - name: Build Statistics
         if: always()
@@ -215,12 +247,12 @@ jobs:
           echo "==================="
 
           # Check cache hit rate and estimate time savings
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "Incremental build: YES (cached artifacts available)"
-            echo "Estimated time saved: ~30-45 minutes"
+          if [ "${{ steps.cache-setup.outputs.cache_hit }}" == "true" ]; then
+            echo "Build type: INCREMENTAL (cached stages 0-2)"
+            echo "Estimated time saved: ~30-40 minutes"
           else
-            echo "Full build: YES (no cache available)"
-            echo "No cache benefit this run"
+            echo "Build type: FULL (no cache)"
+            echo "Cache will be saved for next build"
           fi
 
           # Show stage sizes
@@ -229,9 +261,18 @@ jobs:
           for stage in stage0 stage1 stage2 stage3; do
             if [ -d "work/$stage" ]; then
               SIZE=$(du -sh "work/$stage" 2>/dev/null | cut -f1 || echo "N/A")
-              echo "  - $stage: $SIZE"
+              SKIP=""
+              [ -f "work/$stage/SKIP" ] && SKIP=" (skipped)"
+              echo "  - $stage: $SIZE$SKIP"
             fi
           done
+
+          # Show cache directory size
+          CACHE_BASE=/opt/pi-gen-cache
+          if [ -d "$CACHE_BASE" ]; then
+            echo ""
+            echo "Persistent cache size: $(du -sh $CACHE_BASE 2>/dev/null | cut -f1)"
+          fi
 
           # Show build logs
           if [ -f deploy/build-docker.log ]; then
