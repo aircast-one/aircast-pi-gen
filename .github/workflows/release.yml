@@ -148,6 +148,7 @@ jobs:
         id: cache-setup
         run: |
           CACHE_BASE=/opt/pi-gen-cache
+          WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
           echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
 
           # Ensure cache directory exists with correct permissions
@@ -155,26 +156,28 @@ jobs:
           sudo chown -R $USER:$USER "$CACHE_BASE"
 
           # Check if we have valid cached stage2 with rootfs
-          if [ -d "$CACHE_BASE/work/stage2/rootfs" ]; then
+          # Pi-gen uses work/IMG_NAME/stage* structure
+          if [ -d "$WORK_DIR/stage2/rootfs" ]; then
             echo "Found cached stage2 rootfs - enabling incremental build"
             echo "cache_hit=true" >> $GITHUB_OUTPUT
 
             # Restore stages using hard links for speed (no copy overhead)
-            mkdir -p work
+            mkdir -p "work/${{ env.IMG_NAME }}"
             for stage in stage0 stage1 stage2; do
-              if [ -d "$CACHE_BASE/work/$stage" ]; then
+              if [ -d "$WORK_DIR/$stage" ]; then
                 echo "Restoring $stage from cache (hard links)..."
-                cp -al "$CACHE_BASE/work/$stage" "work/$stage"
-                touch "work/$stage/SKIP"
-                echo "  $stage: $(du -sh work/$stage | cut -f1)"
+                cp -al "$WORK_DIR/$stage" "work/${{ env.IMG_NAME }}/$stage"
+                touch "work/${{ env.IMG_NAME }}/$stage/SKIP"
+                echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
               fi
             done
 
             # Ensure stage3 doesn't have SKIP file
-            rm -f work/stage3/SKIP 2>/dev/null || true
+            rm -f "work/${{ env.IMG_NAME }}/stage3/SKIP" 2>/dev/null || true
           else
             echo "No valid cache found - will run full build"
             echo "cache_hit=false" >> $GITHUB_OUTPUT
+            echo "Expected cache at: $WORK_DIR/stage2/rootfs"
           fi
 
           # Setup apt cache bind mount for debootstrap
@@ -218,15 +221,20 @@ jobs:
         if: success()
         run: |
           CACHE_BASE=/opt/pi-gen-cache
+          WORK_DIR="work/${{ env.IMG_NAME }}"
+          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
           echo "Saving build artifacts to persistent cache..."
 
           # Save stage rootfs for incremental builds
+          # Pi-gen uses work/IMG_NAME/stage* structure
           for stage in stage0 stage1 stage2; do
-            if [ -d "work/$stage/rootfs" ]; then
+            if [ -d "$WORK_DIR/$stage/rootfs" ]; then
               echo "Caching $stage..."
-              mkdir -p "$CACHE_BASE/work/$stage"
-              rsync -a --delete "work/$stage/" "$CACHE_BASE/work/$stage/"
-              echo "  Saved: $(du -sh $CACHE_BASE/work/$stage | cut -f1)"
+              mkdir -p "$CACHE_WORK_DIR/$stage"
+              rsync -a --delete "$WORK_DIR/$stage/" "$CACHE_WORK_DIR/$stage/"
+              echo "  Saved: $(du -sh $CACHE_WORK_DIR/$stage | cut -f1)"
+            else
+              echo "  $stage/rootfs not found at $WORK_DIR/$stage/rootfs"
             fi
           done
 
@@ -255,14 +263,15 @@ jobs:
             echo "Cache will be saved for next build"
           fi
 
-          # Show stage sizes
+          # Show stage sizes (pi-gen uses work/IMG_NAME/stage* structure)
+          WORK_DIR="work/${{ env.IMG_NAME }}"
           echo ""
           echo "Stage sizes:"
           for stage in stage0 stage1 stage2 stage3; do
-            if [ -d "work/$stage" ]; then
-              SIZE=$(du -sh "work/$stage" 2>/dev/null | cut -f1 || echo "N/A")
+            if [ -d "$WORK_DIR/$stage" ]; then
+              SIZE=$(du -sh "$WORK_DIR/$stage" 2>/dev/null | cut -f1 || echo "N/A")
               SKIP=""
-              [ -f "work/$stage/SKIP" ] && SKIP=" (skipped)"
+              [ -f "$WORK_DIR/$stage/SKIP" ] && SKIP=" (skipped)"
               echo "  - $stage: $SIZE$SKIP"
             fi
           done
