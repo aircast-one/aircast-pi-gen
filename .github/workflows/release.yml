@@ -12,6 +12,8 @@ on:
       - main
       - staging
       - develop
+    paths-ignore:
+      - 'VERSION'
 
   repository_dispatch:
     types: [build-development-image, build-staging-image, build-testing-image, build-production-image]
