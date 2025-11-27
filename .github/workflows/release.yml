@@ -167,13 +167,19 @@ jobs:
               if [ -d "$WORK_DIR/$stage" ]; then
                 echo "Restoring $stage from cache (hard links)..."
                 cp -al "$WORK_DIR/$stage" "work/${{ env.IMG_NAME }}/$stage"
-                touch "work/${{ env.IMG_NAME }}/$stage/SKIP"
                 echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
               fi
             done
 
+            # Create SKIP files in STAGE SOURCE directories (where pi-gen checks)
+            # Pi-gen checks stage0/SKIP, stage1/SKIP, etc. NOT work/.../SKIP
+            for stage in stage0 stage1 stage2; do
+              touch "$stage/SKIP"
+              echo "  Created SKIP marker: $stage/SKIP"
+            done
+
             # Ensure stage3 doesn't have SKIP file
-            rm -f "work/${{ env.IMG_NAME }}/stage3/SKIP" 2>/dev/null || true
+            rm -f "stage3/SKIP" 2>/dev/null || true
           else
             echo "No valid cache found - will run full build"
             echo "cache_hit=false" >> $GITHUB_OUTPUT
