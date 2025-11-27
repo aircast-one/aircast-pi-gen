@@ -51,18 +51,21 @@ jobs:
       - name: Determine version and distribution
         id: version
         run: |
+          # Read base version from VERSION file
+          BASE_VERSION=$(cat VERSION)
+
           # Determine distribution based on trigger
           if [ "${{ github.event_name }}" == "push" ]; then
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
               DISTRIBUTION="development"
-              VERSION="v0.0.0-dev.${SHORT_SHA}"
+              VERSION="v${BASE_VERSION}-dev.${SHORT_SHA}"
             elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
               DISTRIBUTION="staging"
-              VERSION="v0.0.0-staging.${SHORT_SHA}"
+              VERSION="v${BASE_VERSION}-staging.${SHORT_SHA}"
             else
               DISTRIBUTION="stable"
-              VERSION="v1.1.3.${SHORT_SHA}"
+              VERSION="v${BASE_VERSION}.${SHORT_SHA}"
             fi
           elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
             VERSION="${{ github.event.client_payload.version }}"
