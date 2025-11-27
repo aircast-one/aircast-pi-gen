@@ -1,4 +1,4 @@
-name: Build and Release Pi Production Images
+name: Build and Release Pi Images
 
 permissions:
   contents: write
@@ -7,21 +7,30 @@ permissions:
   repository-projects: write
 
 on:
-  # Trigger on push to main branch
   push:
     branches:
       - main
+      - develop
 
-  # Trigger from aircast-agent webhook
   repository_dispatch:
-    types: [build-production-image]
+    types: [build-development-image, build-staging-image, build-testing-image, build-production-image]
 
   workflow_dispatch:
     inputs:
       version:
-        description: 'Production version (e.g., v1.0.0)'
+        description: 'Version (e.g., v1.0.0, v1.0.0-rc.1, v1.0.0-dev.1)'
         required: true
         type: string
+      distribution:
+        description: 'Distribution channel'
+        required: true
+        type: choice
+        options:
+          - stable
+          - staging
+          - testing
+          - development
+        default: stable
 
 env:
   IMG_NAME: aircast-rpi-arm64
@@ -31,34 +40,81 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      distribution: ${{ steps.version.outputs.distribution }}
+      runner_label: ${{ steps.version.outputs.runner_label }}
+      environment: ${{ steps.version.outputs.environment }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Determine version
+      - name: Determine version and distribution
         id: version
         run: |
+          # Determine distribution based on trigger
           if [ "${{ github.event_name }}" == "push" ]; then
-            # For branch pushes, generate version from commit SHA
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            VERSION="v1.1.3.${SHORT_SHA}"
+            if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+              DISTRIBUTION="development"
+              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              VERSION="v0.0.0-dev.${SHORT_SHA}"
+            else
+              DISTRIBUTION="stable"
+              SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              VERSION="v1.1.3.${SHORT_SHA}"
+            fi
           elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            # For webhook triggers from aircast-agent
             VERSION="${{ github.event.client_payload.version }}"
-            echo "📨 Triggered by webhook from: ${{ github.event.client_payload.trigger }}"
-            echo "🏷️ Agent version: $VERSION"
+
+            # Determine distribution from event type or payload
+            EVENT_TYPE="${{ github.event.action }}"
+            case "$EVENT_TYPE" in
+              "build-development-image")
+                DISTRIBUTION="development"
+                ;;
+              "build-staging-image")
+                DISTRIBUTION="staging"
+                ;;
+              "build-testing-image")
+                DISTRIBUTION="testing"
+                ;;
+              "build-production-image")
+                DISTRIBUTION="stable"
+                ;;
+              *)
+                # Fallback to payload distribution or stable
+                DISTRIBUTION="${{ github.event.client_payload.distribution }}"
+                if [ -z "$DISTRIBUTION" ]; then
+                  DISTRIBUTION="stable"
+                fi
+                ;;
+            esac
+
+            echo "Triggered by webhook from: ${{ github.event.client_payload.trigger }}"
+            echo "Agent version: $VERSION"
           else
-            # For manual dispatch, use the input
+            # Manual dispatch
             VERSION="${{ inputs.version }}"
+            DISTRIBUTION="${{ inputs.distribution }}"
           fi
-          
+
+          # Set runner label and environment based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            RUNNER_LABEL="dev"
+            ENVIRONMENT="development"
+          else
+            RUNNER_LABEL="prod"
+            ENVIRONMENT="production"
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "🏷️ Production release: $VERSION"
+          echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
+          echo "runner_label=$RUNNER_LABEL" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "Building $VERSION for $DISTRIBUTION channel (runner: $RUNNER_LABEL, env: $ENVIRONMENT)"
 
   build:
     needs: prepare
-    runs-on: [self-hosted, prod]
-    environment: production
+    runs-on: [self-hosted, "${{ needs.prepare.outputs.runner_label }}"]
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Checkout repository
@@ -67,21 +123,22 @@ jobs:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-v1
-          restore-keys: |
-            apt-${{ runner.os }}-
-
-      - name: Install dependencies
+      - name: Verify dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            coreutils quilt parted qemu-user-static debootstrap zerofree zip \
-            dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
-            gpg pigz xxd arch-test bmap-tools
+          echo "Verifying pre-installed dependencies..."
+          DEPS="coreutils quilt parted qemu-user-static debootstrap zerofree zip dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc gpg pigz xxd arch-test bmap-tools"
+          MISSING=""
+          for dep in $DEPS; do
+            if ! dpkg -l | grep -qw "$dep"; then
+              MISSING="$MISSING $dep"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "Installing missing dependencies:$MISSING"
+            sudo apt-get update && sudo apt-get install -y $MISSING
+          else
+            echo "All dependencies pre-installed"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -96,7 +153,7 @@ jobs:
 
       - name: Create build configuration
         run: |
-          echo "📝 Creating build configuration..."
+          echo "Creating build configuration..."
           cat > config << EOF
           IMG_NAME='aircast-rpi-arm64'
           ENABLE_SSH=1
@@ -107,136 +164,78 @@ jobs:
           TARGET_HOSTNAME=aircast
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           EOF
-          
-          echo "✅ Configuration created"
 
-      - name: Cache Docker data
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.docker
-          key: docker-${{ runner.os }}-v1
-          restore-keys: |
-            docker-${{ runner.os }}-
-
-      - name: Cache pi-gen build artifacts
-        uses: actions/cache@v4
-        id: cache-pigen
-        with:
-          path: |
-            work
-            deploy
-            .build-cache
-          key: pi-gen-${{ runner.os }}-v1
-          restore-keys: |
-            pi-gen-${{ runner.os }}-
-            pi-gen-
+          echo "Configuration created"
 
       - name: Clean up Docker containers
         run: |
-          echo "🧹 Cleaning up any existing Docker containers..."
+          echo "Cleaning up any existing Docker containers..."
           docker rm -f pigen_work 2>/dev/null || true
           docker rm -f pigen_work_cont 2>/dev/null || true
-          echo "✅ Container cleanup completed"
+          echo "Container cleanup completed"
 
       - name: Build Pi image with Docker
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           PRESERVE_CONTAINER: 1
         run: |
-          echo "🚀 Starting Docker-based build..."
-          echo "📋 Event: ${{ github.event_name }}"
-          echo "🗂️ Cache hits:"
-          echo "  - Pi-gen artifacts: ${{ steps.cache-pigen.outputs.cache-hit }}"
-
-          # Create SKIP files for cached stages to optimize build
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "⏭️  Cached pi-gen artifacts found - enabling incremental build"
-            # The build scripts will handle SKIP file creation
-            export USE_CACHED_STAGES=1
-          fi
+          echo "Starting Docker-based build..."
+          echo "Event: ${{ github.event_name }}"
+          echo "Distribution: ${{ needs.prepare.outputs.distribution }}"
 
           # Use GitHub-optimized build script if available
           if [ -f ./build-docker-github.sh ]; then
             ./build-docker-github.sh
           else
-            # Fallback to regular build
             ./build-docker.sh
           fi
 
-          echo "✅ Build completed successfully!"
-
-      - name: Clean up Docker resources
-        if: always()
-        run: |
-          echo "🧹 Cleaning up Docker resources..."
-          docker rm -v -f pigen_work 2>/dev/null || true
-          docker rm -v -f pigen_work_cont 2>/dev/null || true
-          docker volume prune -f
-          docker image prune -f
-          echo "✅ Cleanup completed"
+          echo "Build completed successfully!"
 
       - name: Build Statistics
         if: always()
         run: |
-          echo "📊 Build Statistics:"
+          echo "Build Statistics:"
           echo "==================="
-          
-          # Check cache hit rate and estimate time savings
-          if [ "${{ steps.cache-pigen.outputs.cache-hit }}" == "true" ]; then
-            echo "✅ Incremental build: YES (cached artifacts available)"
-            echo "⏱️  Estimated time saved: ~30-45 minutes"
-          else
-            echo "📦 Full build: YES (no cache available)"
-            echo "⏱️  No cache benefit this run"
-          fi
-          
-          # Show stage sizes
+          echo "Distribution: ${{ needs.prepare.outputs.distribution }}"
           echo ""
-          echo "📁 Stage sizes:"
+          echo "Stage sizes:"
           for stage in stage0 stage1 stage2 stage3; do
             if [ -d "work/$stage" ]; then
               SIZE=$(du -sh "work/$stage" 2>/dev/null | cut -f1 || echo "N/A")
               echo "  - $stage: $SIZE"
             fi
           done
-          
-          # Show build logs
-          if [ -f deploy/build-docker.log ]; then
-            echo ""
-            echo "⏱️  Build time:"
-            grep -E "real|user|sys" deploy/build-docker.log | tail -3 || true
-          fi
 
       - name: Prepare artifacts
         id: artifacts
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          
+
           # Find the generated image
           IMAGE_PATH=$(find deploy -name "*.zip" -o -name "*.img" -o -name "*.img.gz" -o -name "*.img.xz" | head -n 1)
-          
+
           if [ -z "$IMAGE_PATH" ]; then
-            echo "❌ No image found in deploy directory"
+            echo "No image found in deploy directory"
             exit 1
           fi
-          
-          echo "📦 Found image: $IMAGE_PATH"
-          
+
+          echo "Found image: $IMAGE_PATH"
+
           # Get the file extension
           EXT="${IMAGE_PATH##*.}"
-          
+
           # Rename to include version
           NEW_NAME="aircast-rpi-arm64-${VERSION}.${EXT}"
           cp "$IMAGE_PATH" "$NEW_NAME"
-          
+
           echo "image_path=$NEW_NAME" >> $GITHUB_OUTPUT
           echo "image_name=$NEW_NAME" >> $GITHUB_OUTPUT
-          
+
           # Create checksums
           sha256sum "$NEW_NAME" > "${NEW_NAME}.sha256"
-          
-          echo "✅ Prepared artifact: $NEW_NAME"
+
+          echo "Prepared artifact: $NEW_NAME"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -249,7 +248,7 @@ jobs:
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - name: Download artifacts
@@ -266,9 +265,9 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: Aircast Pi Image ${{ needs.prepare.outputs.version }}
           body: |
-            ## Aircast Raspberry Pi Development Image
+            ## Aircast Raspberry Pi Image
 
-            This is a production release of the Raspberry Pi image for Aircast.
+            **Channel:** ${{ needs.prepare.outputs.distribution }}
 
             ### Installation
             1. Download the image file
@@ -285,7 +284,7 @@ jobs:
             ### Checksums
             SHA256 checksums are provided for verification.
           draft: false
-          prerelease: false
+          prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
           files: |
             aircast-rpi-arm64-*.zip
             aircast-rpi-arm64-*.img
@@ -308,7 +307,7 @@ jobs:
 
       - name: Wait for GitHub release
         run: |
-          echo "⏳ Waiting for GitHub release to be fully available..."
+          echo "Waiting for GitHub release to be fully available..."
           sleep 30  # Give GitHub time to process the release
 
       - name: Download and mirror release assets
@@ -316,107 +315,123 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          echo "🔍 Fetching release assets for $VERSION..."
-          
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+          echo "Fetching release assets for $VERSION ($DISTRIBUTION)..."
+
           # Get release info
           RELEASE_INFO=$(gh api repos/${{ github.repository }}/releases/tags/$VERSION)
           RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
           RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.html_url')
           RELEASE_BODY=$(echo "$RELEASE_INFO" | jq -r '.body')
           CREATED_AT=$(echo "$RELEASE_INFO" | jq -r '.created_at')
-          
-          echo "📦 Found release: $RELEASE_URL"
-          
+
+          echo "Found release: $RELEASE_URL"
+
           # Create temp directory for downloads
           mkdir -p temp-assets
           cd temp-assets
-          
+
           # Download all release assets
-          echo "📥 Downloading release assets..."
+          echo "Downloading release assets..."
           gh release download $VERSION -R ${{ github.repository }}
-          
-          # Upload to S3
-          echo "📤 Uploading to S3..."
-          
+
+          # Upload to S3 (use distribution-based path)
+          S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
+          echo "Uploading to S3 ($S3_PATH)..."
+
+          # Determine CloudFront domain based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+          else
+            DOWNLOADS_DOMAIN="downloads.aircast.one"
+          fi
+
           # Upload all image files and checksums
           for file in aircast-rpi-arm64-*; do
             if [ -f "$file" ]; then
               echo "Uploading: $file"
-              aws s3 cp "$file" "s3://aircast-artifacts/production/images/$VERSION/$file" --acl public-read
+              aws s3 cp "$file" "$S3_PATH/$VERSION/$file" --acl public-read
             fi
           done
-          
+
           # Create and upload metadata
-          echo "📝 Creating release metadata..."
+          echo "Creating release metadata..."
           cat > release-metadata.json << EOF
           {
             "version": "$VERSION",
+            "distribution": "$DISTRIBUTION",
             "release_url": "$RELEASE_URL",
             "created_at": "$CREATED_AT",
             "release_notes": $(echo "$RELEASE_BODY" | jq -Rs .),
             "github_release_id": "$RELEASE_ID",
-            "mirror_url": "https://downloads.aircast.one/images/$VERSION/",
+            "mirror_url": "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/",
             "mirrored_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
-          
-          aws s3 cp release-metadata.json "s3://aircast-artifacts/production/images/$VERSION/metadata.json" --acl public-read
-          
-          # Update latest pointer
+
+          aws s3 cp release-metadata.json "$S3_PATH/$VERSION/metadata.json" --acl public-read
+
+          # Update latest pointer for this distribution
           echo "$VERSION" > latest.txt
-          aws s3 cp latest.txt "s3://aircast-artifacts/production/images/latest.txt" --acl public-read
-          
+          aws s3 cp latest.txt "$S3_PATH/latest.txt" --acl public-read
+
           # Create latest symlinks for direct download
-          echo "📎 Creating latest symlinks..."
+          echo "Creating latest symlinks..."
           for file in aircast-rpi-arm64-*; do
             if [ -f "$file" ]; then
-              # Extract file extension
               if [[ "$file" == *.zip ]]; then
-                aws s3 cp "$file" "s3://aircast-artifacts/production/images/latest/aircast-rpi-arm64-latest.zip" --acl public-read
+                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.zip" --acl public-read
               elif [[ "$file" == *.sha256 ]]; then
-                aws s3 cp "$file" "s3://aircast-artifacts/production/images/latest/aircast-rpi-arm64-latest.zip.sha256" --acl public-read
+                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.zip.sha256" --acl public-read
               fi
             fi
           done
-          
-          echo "✅ Mirror complete!"
-          echo "📍 Mirror URL: https://downloads.aircast.one/images/$VERSION/"
-          
+
+          echo "[OK] Mirror complete!"
+          echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/"
+
           cd ..
           rm -rf temp-assets
 
       - name: Invalidate CloudFront cache
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          echo "🔄 Invalidating CloudFront cache..."
-          
-          # Find CloudFront distribution for downloads.aircast.one
-          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(Aliases.Items, 'downloads.aircast.one')].Id" \
-            --output text)
-          
-          if [ -z "$DISTRIBUTION_ID" ]; then
-            echo "⚠️  Warning: Could not find CloudFront distribution for downloads.aircast.one"
-            echo "Please check your CloudFront configuration"
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+          echo "Invalidating CloudFront cache..."
+
+          # Determine CloudFront domain based on distribution
+          if [ "$DISTRIBUTION" == "development" ]; then
+            CF_DOMAIN="downloads.dev.aircast.one"
           else
-            echo "Found CloudFront distribution: $DISTRIBUTION_ID"
-          
-            # Create invalidation for latest.txt, latest/* and the new version
+            CF_DOMAIN="downloads.aircast.one"
+          fi
+
+          # Find CloudFront distribution
+          CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items, '$CF_DOMAIN')].Id" \
+            --output text)
+
+          if [ -z "$CF_DISTRIBUTION_ID" ]; then
+            echo "[WARN] Could not find CloudFront distribution for $CF_DOMAIN"
+          else
+            echo "Found CloudFront distribution: $CF_DISTRIBUTION_ID"
+
+            # Create invalidation for distribution-specific paths
             INVALIDATION_ID=$(aws cloudfront create-invalidation \
-              --distribution-id $DISTRIBUTION_ID \
-              --paths "/images/latest.txt" "/images/$VERSION/*" \
+              --distribution-id $CF_DISTRIBUTION_ID \
+              --paths "/$DISTRIBUTION/images/latest.txt" "/$DISTRIBUTION/images/$VERSION/*" "/$DISTRIBUTION/images/latest/*" \
               --query 'Invalidation.Id' \
               --output text)
-          
+
             echo "Created invalidation: $INVALIDATION_ID"
-          
+
             # Wait for invalidation to complete (with timeout)
             echo "Waiting for CloudFront invalidation to complete..."
             timeout 300 aws cloudfront wait invalidation-completed \
-              --distribution-id $DISTRIBUTION_ID \
-              --id $INVALIDATION_ID || echo "⚠️  Invalidation is taking longer than expected"
-          
-            echo "✅ CloudFront cache invalidated!"
+              --distribution-id $CF_DISTRIBUTION_ID \
+              --id $INVALIDATION_ID || echo "[WARN] Invalidation is taking longer than expected"
+
+            echo "[OK] CloudFront cache invalidated!"
           fi
 
   notify:
@@ -427,42 +442,55 @@ jobs:
     steps:
       - name: Generate build summary
         run: |
-          echo "## 🥧 Raspberry Pi Image Build Summary" >> $GITHUB_STEP_SUMMARY
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+
+          echo "## Raspberry Pi Image Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Trigger:** ${{ github.event_name == 'push' && 'Branch Push' || github.event_name == 'repository_dispatch' && 'Webhook from aircast-agent' || 'Manual Dispatch' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Distribution:** $DISTRIBUTION" >> $GITHUB_STEP_SUMMARY
           echo "**Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image Build:** ${{ needs.build.result == 'success' && '✅ Success' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **GitHub Release:** ${{ needs.release.result == 'success' && '✅ Success' || needs.release.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && '✅ Success' || needs.mirror-to-s3.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Build:** ${{ needs.build.result == 'success' && 'Success' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release:** ${{ needs.release.result == 'success' && 'Success' || needs.release.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
+          # Determine downloads domain
+          if [ "$DISTRIBUTION" == "development" ]; then
+            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+          else
+            DOWNLOADS_DOMAIN="downloads.aircast.one"
+          fi
+
           if [ "${{ needs.release.result }}" == "success" ]; then
-            echo "### 🎉 Release Published" >> $GITHUB_STEP_SUMMARY
+            echo "### Release Published" >> $GITHUB_STEP_SUMMARY
             echo "- **GitHub Release:** https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ needs.mirror-to-s3.result }}" == "success" ]; then
-              echo "- **S3 Mirror:** https://downloads.aircast.one/images/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
-              echo "- **Latest Version:** https://downloads.aircast.one/images/latest.txt" >> $GITHUB_STEP_SUMMARY
+              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+              echo "- **Latest ($DISTRIBUTION):** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/latest.txt" >> $GITHUB_STEP_SUMMARY
             fi
           else
-            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "### Build Failed" >> $GITHUB_STEP_SUMMARY
             echo "Check the build logs above for details." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Console output
         run: |
-          echo "🏁 Pi image build completed"
-          echo "📊 Results:"
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+
+          echo "Pi image build completed"
+          echo "Results:"
           echo "  - Trigger: ${{ github.event_name == 'push' && 'Branch Push' || github.event_name == 'repository_dispatch' && 'Webhook' || 'Manual Dispatch' }}"
           echo "  - Version: ${{ needs.prepare.outputs.version }}"
+          echo "  - Distribution: $DISTRIBUTION"
           echo "  - Build Status: ${{ needs.build.result }}"
           echo "  - Release Status: ${{ needs.release.result }}"
-          
+
           if [ "${{ needs.release.result }}" == "success" ]; then
-            echo "🎉 Pi image release published - check GitHub releases"
+            echo "[OK] Pi image release published to $DISTRIBUTION channel"
           else
-            echo "❌ Build or release failed - check logs for details"
+            echo "[ERROR] Build or release failed - check logs for details"
           fi
