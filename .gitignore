@@ -1,5 +1,6 @@
 deploy/*
 work/*
+.build-cache/
 config
 postrun.sh
 SKIP
