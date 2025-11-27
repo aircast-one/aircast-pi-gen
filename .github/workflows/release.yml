@@ -7,17 +7,11 @@ permissions:
   repository-projects: write
 
 on:
-  push:
-    branches:
-      - main
-      - staging
-      - develop
-    paths-ignore:
-      - 'VERSION'
-
+  # Triggered by aircast-agent releases
   repository_dispatch:
     types: [build-development-image, build-staging-image, build-testing-image, build-production-image]
 
+  # Manual trigger for testing/emergency builds
   workflow_dispatch:
     inputs:
       version:
@@ -30,8 +24,8 @@ on:
         type: choice
         options:
           - stable
-          - staging
           - testing
+          - staging
           - development
         default: stable
 
@@ -53,28 +47,12 @@ jobs:
       - name: Determine version and distribution
         id: version
         run: |
-          # Read base version from VERSION file
-          BASE_VERSION=$(cat VERSION)
-
-          # Determine distribution based on trigger
-          if [ "${{ github.event_name }}" == "push" ]; then
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
-              DISTRIBUTION="development"
-              VERSION="v${BASE_VERSION}-dev.${SHORT_SHA}"
-            elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
-              DISTRIBUTION="staging"
-              VERSION="v${BASE_VERSION}-staging.${SHORT_SHA}"
-            else
-              DISTRIBUTION="stable"
-              VERSION="v${BASE_VERSION}.${SHORT_SHA}"
-            fi
-          elif [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            # Triggered by aircast-agent release
             VERSION="${{ github.event.client_payload.version }}"
 
-            # Determine distribution from event type or payload
-            EVENT_TYPE="${{ github.event.action }}"
-            case "$EVENT_TYPE" in
+            # Determine distribution from event type
+            case "${{ github.event.action }}" in
               "build-development-image")
                 DISTRIBUTION="development"
                 ;;
@@ -87,16 +65,9 @@ jobs:
               "build-production-image")
                 DISTRIBUTION="stable"
                 ;;
-              *)
-                # Fallback to payload distribution or stable
-                DISTRIBUTION="${{ github.event.client_payload.distribution }}"
-                if [ -z "$DISTRIBUTION" ]; then
-                  DISTRIBUTION="stable"
-                fi
-                ;;
             esac
 
-            echo "Triggered by webhook from: ${{ github.event.client_payload.trigger }}"
+            echo "Triggered by: ${{ github.event.client_payload.trigger }}"
             echo "Agent version: $VERSION"
           else
             # Manual dispatch
