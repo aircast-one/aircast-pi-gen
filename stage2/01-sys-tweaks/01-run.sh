@@ -22,6 +22,7 @@ on_chroot << EOF
 systemctl disable hwclock.sh
 systemctl disable nfs-common
 systemctl disable rpcbind
+systemctl mask NetworkManager-wait-online.service
 if [ "${ENABLE_SSH}" == "1" ]; then
 	systemctl enable ssh
 else
