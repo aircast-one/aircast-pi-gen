@@ -58,3 +58,8 @@ SERVICE_EOF
 # Enable the service
 systemctl enable aircast-first-update.service
 EOF
+
+# Enable console login (getty on tty1)
+on_chroot << EOF
+systemctl enable getty@tty1.service
+EOF
