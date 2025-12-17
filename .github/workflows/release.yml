@@ -38,7 +38,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
-      runner_label: ${{ steps.version.outputs.runner_label }}
       environment: ${{ steps.version.outputs.environment }}
     steps:
       - name: Checkout repository
@@ -75,31 +74,24 @@ jobs:
             DISTRIBUTION="${{ inputs.distribution }}"
           fi
 
-          # Set runner label and environment based on distribution
+          # Set environment based on distribution
           case "$DISTRIBUTION" in
-            "development")
-              RUNNER_LABEL="dev"
+            "development"|"staging")
               ENVIRONMENT="development"
               ;;
-            "staging")
-              RUNNER_LABEL="dev"
-              ENVIRONMENT="staging"
-              ;;
             *)
-              RUNNER_LABEL="prod"
               ENVIRONMENT="production"
               ;;
           esac
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
-          echo "runner_label=$RUNNER_LABEL" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
-          echo "Building $VERSION for $DISTRIBUTION channel (runner: $RUNNER_LABEL, env: $ENVIRONMENT)"
+          echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT)"
 
   build:
     needs: prepare
-    runs-on: [self-hosted, "${{ needs.prepare.outputs.runner_label }}"]
+    runs-on: self-hosted
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
