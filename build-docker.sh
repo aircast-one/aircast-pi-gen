@@ -202,9 +202,10 @@ echo "copying results from deploy/"
 ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/deploy - | tar -xf -
 
 # Copy work directory back for caching (only if not already mounted)
+# Use sudo tar to preserve ownership (rootfs has various UIDs like 1000 for pi user)
 if [ -z "${WORK_MOUNT}" ]; then
   echo "copying work directory from container for caching..."
-  ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/work - | tar -xf - 2>/dev/null || true
+  ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/work - | sudo tar -xf - 2>/dev/null || true
 fi
 
 echo "copying log from container ${CONTAINER_NAME} to deploy/"
