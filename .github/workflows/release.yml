@@ -153,11 +153,12 @@ jobs:
             echo "cache_hit=true" >> $GITHUB_OUTPUT
 
             # Restore cached stages to work directory (build-docker.sh will detect and mount)
-            mkdir -p "work/${{ env.IMG_NAME }}"
+            # Use sudo rsync -a to preserve ownership/permissions (rootfs has various UIDs)
+            sudo mkdir -p "work/${{ env.IMG_NAME }}"
             for stage in stage0 stage1 stage2; do
               if [ -d "$CACHE_WORK_DIR/$stage" ]; then
                 echo "Restoring $stage from cache..."
-                cp -al "$CACHE_WORK_DIR/$stage" "work/${{ env.IMG_NAME }}/$stage"
+                sudo rsync -a "$CACHE_WORK_DIR/$stage/" "work/${{ env.IMG_NAME }}/$stage/"
                 echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
               fi
             done
@@ -203,12 +204,12 @@ jobs:
           echo "Saving build artifacts to persistent cache..."
 
           # Save stage rootfs for incremental builds
-          # Pi-gen uses work/IMG_NAME/stage* structure
+          # Use sudo to preserve ownership/permissions (rootfs has various UIDs like 1000 for pi user)
           for stage in stage0 stage1 stage2; do
             if [ -d "$WORK_DIR/$stage/rootfs" ]; then
               echo "Caching $stage..."
-              mkdir -p "$CACHE_WORK_DIR/$stage"
-              rsync -a --delete "$WORK_DIR/$stage/" "$CACHE_WORK_DIR/$stage/"
+              sudo mkdir -p "$CACHE_WORK_DIR/$stage"
+              sudo rsync -a --delete "$WORK_DIR/$stage/" "$CACHE_WORK_DIR/$stage/"
               echo "  Saved: $(du -sh $CACHE_WORK_DIR/$stage | cut -f1)"
             else
               echo "  $stage/rootfs not found at $WORK_DIR/$stage/rootfs"
