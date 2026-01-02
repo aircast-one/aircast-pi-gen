@@ -98,12 +98,25 @@ else
   DOCKER_CMDLINE_POST=""
 fi
 
-# Mount work directory for incremental builds (if it has cached stages)
+# Mount work directory for incremental builds (if it has cached rootfs)
+# Pi-gen uses work/${IMG_NAME}/stage*/rootfs structure
 WORK_MOUNT=""
-if [ -d "${DIR}/work" ] && [ -f "${DIR}/work/stage0/SKIP" -o -f "${DIR}/work/stage1/SKIP" -o -f "${DIR}/work/stage2/SKIP" ]; then
-  echo "Mounting cached work directory for incremental build..."
+if [ -d "${DIR}/work/${IMG_NAME}/stage2/rootfs" ]; then
+  echo "Found cached stage2 rootfs at ${DIR}/work/${IMG_NAME}/stage2/rootfs"
+  echo "Mounting work directory for incremental build..."
   WORK_MOUNT="-v ${DIR}/work:/pi-gen/work"
   INCREMENTAL=1
+  # Auto-detect which stages to skip based on existing rootfs
+  if [ -z "${SKIP_STAGES}" ]; then
+    SKIP_STAGES=""
+    for stage in stage0 stage1 stage2; do
+      if [ -d "${DIR}/work/${IMG_NAME}/${stage}/rootfs" ]; then
+        SKIP_STAGES="${SKIP_STAGES} ${stage}"
+      fi
+    done
+    SKIP_STAGES=$(echo "${SKIP_STAGES}" | xargs)  # trim whitespace
+    echo "Auto-detected stages to skip: ${SKIP_STAGES}"
+  fi
 fi
 
 # Show build mode
@@ -170,12 +183,13 @@ time ${DOCKER} run \
     (mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc || true) &&
     cd /pi-gen;
     # Create SKIP files for incremental builds if SKIP_STAGES is set
+    # Pi-gen checks for SKIP files in the SOURCE stage directories (stage0/, stage1/, etc.)
     if [ -n \"\${SKIP_STAGES:-}\" ]; then
       echo 'Setting up incremental build skip markers...'
       for stage in \${SKIP_STAGES}; do
-        mkdir -p work/\${stage}
-        touch work/\${stage}/SKIP
-        echo \"  Created SKIP for \${stage}\"
+        # Create SKIP in source directory (where pi-gen checks)
+        touch \${stage}/SKIP
+        echo \"  Created SKIP marker: \${stage}/SKIP\"
       done
     fi
     ./build.sh ${BUILD_OPTS} &&

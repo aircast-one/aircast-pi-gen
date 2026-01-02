@@ -140,7 +140,7 @@ jobs:
         id: cache-setup
         run: |
           CACHE_BASE=/opt/pi-gen-cache
-          WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
+          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
           echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
 
           # Ensure cache directory exists with correct permissions
@@ -148,37 +148,27 @@ jobs:
           sudo chown -R $USER:$USER "$CACHE_BASE"
 
           # Check if we have valid cached stage2 with rootfs
-          # Pi-gen uses work/IMG_NAME/stage* structure
-          if [ -d "$WORK_DIR/stage2/rootfs" ]; then
+          if [ -d "$CACHE_WORK_DIR/stage2/rootfs" ]; then
             echo "Found cached stage2 rootfs - enabling incremental build"
             echo "cache_hit=true" >> $GITHUB_OUTPUT
 
-            # Restore stages using hard links for speed (no copy overhead)
+            # Restore cached stages to work directory (build-docker.sh will detect and mount)
             mkdir -p "work/${{ env.IMG_NAME }}"
             for stage in stage0 stage1 stage2; do
-              if [ -d "$WORK_DIR/$stage" ]; then
-                echo "Restoring $stage from cache (hard links)..."
-                cp -al "$WORK_DIR/$stage" "work/${{ env.IMG_NAME }}/$stage"
+              if [ -d "$CACHE_WORK_DIR/$stage" ]; then
+                echo "Restoring $stage from cache..."
+                cp -al "$CACHE_WORK_DIR/$stage" "work/${{ env.IMG_NAME }}/$stage"
                 echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
               fi
             done
-
-            # Create SKIP files in STAGE SOURCE directories (where pi-gen checks)
-            # Pi-gen checks stage0/SKIP, stage1/SKIP, etc. NOT work/.../SKIP
-            for stage in stage0 stage1 stage2; do
-              touch "$stage/SKIP"
-              echo "  Created SKIP marker: $stage/SKIP"
-            done
-
-            # Ensure stage3 doesn't have SKIP file
-            rm -f "stage3/SKIP" 2>/dev/null || true
+            echo "Cache restored - build-docker.sh will auto-detect and skip cached stages"
           else
             echo "No valid cache found - will run full build"
             echo "cache_hit=false" >> $GITHUB_OUTPUT
-            echo "Expected cache at: $WORK_DIR/stage2/rootfs"
+            echo "Expected cache at: $CACHE_WORK_DIR/stage2/rootfs"
           fi
 
-          # Setup apt cache bind mount for debootstrap
+          # Setup apt cache for faster debootstrap
           sudo mkdir -p /var/cache/apt/archives
           if [ -d "$CACHE_BASE/apt-archives" ] && [ "$(ls -A $CACHE_BASE/apt-archives 2>/dev/null)" ]; then
             echo "Restoring apt package cache..."
@@ -194,23 +184,12 @@ jobs:
 
       - name: Build Pi image with Docker
         env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
           PRESERVE_CONTAINER: 1
-          CACHE_HIT: ${{ steps.cache-setup.outputs.cache_hit }}
         run: |
           echo "Starting Docker-based build..."
-          echo "Event: ${{ github.event_name }}"
-          echo "Cache status: $CACHE_HIT"
+          echo "Cache status: ${{ steps.cache-setup.outputs.cache_hit }}"
 
-          if [ "$CACHE_HIT" == "true" ]; then
-            echo "Running INCREMENTAL build (stage3 only)"
-            export INCREMENTAL=1
-            export SKIP_STAGES="stage0 stage1 stage2"
-          else
-            echo "Running FULL build (all stages)"
-          fi
-
-          # Run the build
+          # build-docker.sh auto-detects cached stages and handles incremental builds
           ./build-docker.sh
 
           echo "Build completed successfully!"
