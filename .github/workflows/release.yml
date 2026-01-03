@@ -153,8 +153,9 @@ jobs:
           echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
 
           # Ensure cache directory exists with correct permissions
+          # IMPORTANT: Do NOT use -R (recursive) here - rootfs files need to keep their original UIDs
           sudo mkdir -p "$CACHE_BASE"/{work,apt-archives}
-          sudo chown -R $USER:$USER "$CACHE_BASE"
+          sudo chown $USER:$USER "$CACHE_BASE" "$CACHE_BASE/work" "$CACHE_BASE/apt-archives"
 
           # Check if we have valid cached stage2 with rootfs
           if [ -d "$CACHE_WORK_DIR/stage2/rootfs" ]; then
