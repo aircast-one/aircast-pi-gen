@@ -95,6 +95,15 @@ jobs:
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
+      - name: Pre-cleanup (remove leftover work directories)
+        run: |
+          # Clean up any leftover work directories from previous builds
+          # These contain root-owned files that would cause checkout to fail
+          if [ -d "work" ]; then
+            echo "Found leftover work directory, cleaning up..."
+            sudo rm -rf work/
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
