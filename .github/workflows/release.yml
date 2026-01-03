@@ -306,6 +306,15 @@ jobs:
             ${{ steps.artifacts.outputs.image_path }}
             ${{ steps.artifacts.outputs.image_path }}.sha256
 
+      - name: Cleanup work directory
+        if: always()
+        run: |
+          # Remove work directory to prevent checkout failures on next run
+          # Work directory contains root-owned files from sudo tar extraction
+          echo "Cleaning up work directory..."
+          sudo rm -rf work/ || true
+          echo "Cleanup complete"
+
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
