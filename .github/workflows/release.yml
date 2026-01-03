@@ -315,14 +315,49 @@ jobs:
             ${{ steps.artifacts.outputs.image_path }}
             ${{ steps.artifacts.outputs.image_path }}.sha256
 
-      - name: Cleanup work directory
+      - name: Cleanup build artifacts
         if: always()
         run: |
-          # Remove work directory to prevent checkout failures on next run
-          # Work directory contains root-owned files from sudo tar extraction
-          echo "Cleaning up work directory..."
-          sudo rm -rf work/ || true
-          echo "Cleanup complete"
+          echo "Cleaning up build artifacts to free disk space..."
+          echo "Note: Persistent cache at /opt/pi-gen-cache is preserved for incremental builds"
+
+          # Remove pi-gen work directory (9GB+)
+          # This is separate from the cache in /opt/pi-gen-cache
+          if [ -d "work" ]; then
+            echo "Removing work directory..."
+            sudo rm -rf work/
+            echo "  Work directory removed"
+          fi
+
+          # Remove deploy directory (build outputs already uploaded)
+          if [ -d "deploy" ]; then
+            echo "Removing deploy directory..."
+            rm -rf deploy/
+            echo "  Deploy directory removed"
+          fi
+
+          # Stop and remove pi-gen container
+          echo "Cleaning up Docker containers..."
+          docker rm -f pigen_work 2>/dev/null && echo "  Removed pigen_work container" || true
+          docker rm -f pigen_work_cont 2>/dev/null && echo "  Removed pigen_work_cont container" || true
+
+          # Remove dangling Docker volumes (pi-gen creates anonymous volumes)
+          echo "Cleaning up Docker volumes..."
+          DANGLING_VOLUMES=$(docker volume ls -qf dangling=true)
+          if [ -n "$DANGLING_VOLUMES" ]; then
+            docker volume rm $DANGLING_VOLUMES 2>/dev/null && echo "  Removed dangling volumes" || true
+          fi
+
+          # Prune unused Docker resources (excludes named volumes used by other services)
+          echo "Pruning unused Docker resources..."
+          docker system prune -f 2>/dev/null || true
+
+          # Show disk usage after cleanup
+          echo ""
+          echo "Disk usage after cleanup:"
+          df -h / | tail -1
+
+          echo "[OK] Cleanup completed"
 
   release:
     needs: [prepare, build]
