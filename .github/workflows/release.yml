@@ -196,9 +196,11 @@ jobs:
       - name: Build Pi image with Docker
         env:
           PRESERVE_CONTAINER: 1
+          AIRCAST_DISTRIBUTION: ${{ needs.prepare.outputs.distribution }}
         run: |
           echo "Starting Docker-based build..."
           echo "Cache status: ${{ steps.cache-setup.outputs.cache_hit }}"
+          echo "Distribution: $AIRCAST_DISTRIBUTION"
 
           # build-docker.sh auto-detects cached stages and handles incremental builds
           ./build-docker.sh

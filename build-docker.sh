@@ -175,6 +175,7 @@ time ${DOCKER} run \
   --volume "${CONFIG_FILE}":/config:ro \
   -e "GIT_HASH=${GIT_HASH}" \
   -e "SKIP_STAGES=${SKIP_STAGES}" \
+  -e "AIRCAST_DISTRIBUTION=${AIRCAST_DISTRIBUTION}" \
   $DOCKER_CMDLINE_POST \
   pi-gen \
   bash -e -o pipefail -c "
