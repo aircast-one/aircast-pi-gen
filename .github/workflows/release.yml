@@ -467,11 +467,15 @@ jobs:
           S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
           echo "Uploading to S3 ($S3_PATH)..."
 
-          # Determine CloudFront domain based on distribution
+          # Determine CloudFront domain and URL path based on distribution
+          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront,
+          # so we don't include /development in the URL path for that domain
           if [ "$DISTRIBUTION" == "development" ]; then
             DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+            URL_PATH="images"
           else
             DOWNLOADS_DOMAIN="downloads.aircast.one"
+            URL_PATH="$DISTRIBUTION/images"
           fi
 
           # Upload all image files and checksums with verification
@@ -561,8 +565,8 @@ jobs:
             --arg filename "$MAIN_IMAGE" \
             --arg extension "$IMAGE_EXTENSION" \
             --argjson size "$IMAGE_SIZE" \
-            --arg download_url "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/$MAIN_IMAGE" \
-            --arg checksum_url "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/$CHECKSUM_FILE" \
+            --arg download_url "https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/$MAIN_IMAGE" \
+            --arg checksum_url "https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/$CHECKSUM_FILE" \
             '{
               version: $version,
               prerelease: $prerelease,
@@ -610,7 +614,7 @@ jobs:
 
           echo "[OK] releases.json updated: $S3_PATH/releases.json"
           echo "[OK] Mirror complete!"
-          echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/"
+          echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/"
 
           cd ..
           rm -rf temp-assets
@@ -621,11 +625,15 @@ jobs:
           DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
           echo "Invalidating CloudFront cache..."
 
-          # Determine CloudFront domain based on distribution
+          # Determine CloudFront domain and URL path based on distribution
+          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront,
+          # so invalidation paths don't include /development for that domain
           if [ "$DISTRIBUTION" == "development" ]; then
             CF_DOMAIN="downloads.dev.aircast.one"
+            URL_PATH="images"
           else
             CF_DOMAIN="downloads.aircast.one"
+            URL_PATH="$DISTRIBUTION/images"
           fi
 
           # Find CloudFront distribution
@@ -641,7 +649,7 @@ jobs:
             # Create invalidation for releases.json and version-specific files
             INVALIDATION_ID=$(aws cloudfront create-invalidation \
               --distribution-id $CF_DISTRIBUTION_ID \
-              --paths "/$DISTRIBUTION/images/releases.json" "/$DISTRIBUTION/images/$VERSION/*" \
+              --paths "/$URL_PATH/releases.json" "/$URL_PATH/$VERSION/*" \
               --query 'Invalidation.Id' \
               --output text)
 
@@ -680,19 +688,22 @@ jobs:
           echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Determine downloads domain
+          # Determine downloads domain and URL path based on distribution
+          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront
           if [ "$DISTRIBUTION" == "development" ]; then
             DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+            URL_PATH="images"
           else
             DOWNLOADS_DOMAIN="downloads.aircast.one"
+            URL_PATH="$DISTRIBUTION/images"
           fi
 
           if [ "${{ needs.release.result }}" == "success" ]; then
             echo "### Release Published" >> $GITHUB_STEP_SUMMARY
             echo "- **GitHub Release:** https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ needs.mirror-to-s3.result }}" == "success" ]; then
-              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
-              echo "- **Releases:** https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/releases.json" >> $GITHUB_STEP_SUMMARY
+              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$URL_PATH/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+              echo "- **Releases:** https://$DOWNLOADS_DOMAIN/$URL_PATH/releases.json" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "### Build Failed" >> $GITHUB_STEP_SUMMARY
