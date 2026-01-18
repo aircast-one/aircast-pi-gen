@@ -467,16 +467,17 @@ jobs:
           S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
           echo "Uploading to S3 ($S3_PATH)..."
 
-          # Determine CloudFront domain and URL path based on distribution
-          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront,
-          # so we don't include /development in the URL path for that domain
+          # Determine CloudFront domain based on distribution
+          # Both CloudFront distributions have OriginPath set to their distribution folder,
+          # so URLs don't include the distribution in the path
+          # - downloads.dev.aircast.one has OriginPath="/development"
+          # - downloads.aircast.one has OriginPath="/stable"
           if [ "$DISTRIBUTION" == "development" ]; then
             DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
-            URL_PATH="images"
           else
             DOWNLOADS_DOMAIN="downloads.aircast.one"
-            URL_PATH="$DISTRIBUTION/images"
           fi
+          URL_PATH="images"
 
           # Upload all image files and checksums with verification
           UPLOAD_FAILED=false
@@ -625,16 +626,14 @@ jobs:
           DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
           echo "Invalidating CloudFront cache..."
 
-          # Determine CloudFront domain and URL path based on distribution
-          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront,
-          # so invalidation paths don't include /development for that domain
+          # Determine CloudFront domain based on distribution
+          # Both CloudFront distributions have OriginPath set, so URLs use /images directly
           if [ "$DISTRIBUTION" == "development" ]; then
             CF_DOMAIN="downloads.dev.aircast.one"
-            URL_PATH="images"
           else
             CF_DOMAIN="downloads.aircast.one"
-            URL_PATH="$DISTRIBUTION/images"
           fi
+          URL_PATH="images"
 
           # Find CloudFront distribution
           CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
@@ -688,15 +687,14 @@ jobs:
           echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Determine downloads domain and URL path based on distribution
-          # Note: downloads.dev.aircast.one has OriginPath="/development" in CloudFront
+          # Determine downloads domain based on distribution
+          # Both CloudFront distributions have OriginPath set, so URLs use /images directly
           if [ "$DISTRIBUTION" == "development" ]; then
             DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
-            URL_PATH="images"
           else
             DOWNLOADS_DOMAIN="downloads.aircast.one"
-            URL_PATH="$DISTRIBUTION/images"
           fi
+          URL_PATH="images"
 
           if [ "${{ needs.release.result }}" == "success" ]; then
             echo "### Release Published" >> $GITHUB_STEP_SUMMARY
