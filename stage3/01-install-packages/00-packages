@@ -3,5 +3,4 @@ curl
 gnupg
 zsh
 rfkill
-libcamera-tools
 watchdog
