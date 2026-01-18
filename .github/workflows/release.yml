@@ -474,16 +474,52 @@ jobs:
             DOWNLOADS_DOMAIN="downloads.aircast.one"
           fi
 
-          # Upload all image files and checksums
+          # Upload all image files and checksums with verification
+          UPLOAD_FAILED=false
           for file in aircast-rpi-arm64-*; do
             if [ -f "$file" ]; then
               echo "Uploading: $file"
-              aws s3 cp "$file" "$S3_PATH/$VERSION/$file" --acl public-read
+              LOCAL_SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+
+              # Upload with checksum verification
+              if ! aws s3 cp "$file" "$S3_PATH/$VERSION/$file" --acl public-read; then
+                echo "[ERROR] Failed to upload $file"
+                UPLOAD_FAILED=true
+                continue
+              fi
+
+              # Verify upload by checking file exists and size matches
+              REMOTE_SIZE=$(aws s3api head-object --bucket aircast-artifacts --key "$DISTRIBUTION/images/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
+              if [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
+                echo "[ERROR] Size mismatch for $file: local=$LOCAL_SIZE, remote=$REMOTE_SIZE"
+                UPLOAD_FAILED=true
+              else
+                echo "[OK] Verified: $file ($LOCAL_SIZE bytes)"
+              fi
             fi
           done
 
+          if [ "$UPLOAD_FAILED" = true ]; then
+            echo "[ERROR] One or more uploads failed verification"
+            exit 1
+          fi
+
           # Create and upload metadata
           echo "Creating release metadata..."
+
+          # Find the main image file (largest non-checksum file)
+          MAIN_IMAGE=$(ls -S aircast-rpi-arm64-* 2>/dev/null | grep -v '.sha256$' | head -1)
+          if [ -n "$MAIN_IMAGE" ]; then
+            IMAGE_SIZE=$(stat -f%z "$MAIN_IMAGE" 2>/dev/null || stat -c%s "$MAIN_IMAGE")
+            IMAGE_EXTENSION="${MAIN_IMAGE##*v[0-9]*\.}"
+            CHECKSUM_FILE="${MAIN_IMAGE}.sha256"
+            HAS_CHECKSUM=$([ -f "$CHECKSUM_FILE" ] && echo "true" || echo "false")
+          else
+            IMAGE_SIZE=0
+            IMAGE_EXTENSION=""
+            HAS_CHECKSUM="false"
+          fi
+
           cat > release-metadata.json << EOF
           {
             "version": "$VERSION",
@@ -493,7 +529,14 @@ jobs:
             "release_notes": $(echo "$RELEASE_BODY" | jq -Rs .),
             "github_release_id": "$RELEASE_ID",
             "mirror_url": "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/",
-            "mirrored_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            "mirrored_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "image": {
+              "filename": "$MAIN_IMAGE",
+              "extension": "$IMAGE_EXTENSION",
+              "size": $IMAGE_SIZE,
+              "download_url": "https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/$MAIN_IMAGE",
+              "has_checksum": $HAS_CHECKSUM
+            }
           }
           EOF
 
@@ -504,16 +547,24 @@ jobs:
           aws s3 cp latest.txt "$S3_PATH/latest.txt" --acl public-read
 
           # Create latest symlinks for direct download
+          # Find the main image file (largest non-checksum file)
           echo "Creating latest symlinks..."
-          for file in aircast-rpi-arm64-*; do
-            if [ -f "$file" ]; then
-              if [[ "$file" == *.img.xz ]]; then
-                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.img.xz" --acl public-read
-              elif [[ "$file" == *.img.xz.sha256 ]]; then
-                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.img.xz.sha256" --acl public-read
-              fi
+          IMAGE_FILE=$(ls -S aircast-rpi-arm64-* 2>/dev/null | grep -v '.sha256$' | head -1)
+          if [ -n "$IMAGE_FILE" ]; then
+            # Extract extension from filename (e.g., img.xz from aircast-rpi-arm64-v1.2.3.img.xz)
+            EXTENSION="${IMAGE_FILE#*.}"  # Remove everything before first dot, then take rest
+            EXTENSION="${IMAGE_FILE##*v[0-9]*\.}"  # Get extension after version number
+
+            echo "Found image: $IMAGE_FILE (extension: $EXTENSION)"
+            aws s3 cp "$IMAGE_FILE" "$S3_PATH/latest/aircast-rpi-arm64-latest.$EXTENSION" --acl public-read
+
+            # Also copy checksum if it exists
+            if [ -f "${IMAGE_FILE}.sha256" ]; then
+              aws s3 cp "${IMAGE_FILE}.sha256" "$S3_PATH/latest/aircast-rpi-arm64-latest.$EXTENSION.sha256" --acl public-read
             fi
-          done
+          else
+            echo "[WARN] No image file found for latest symlink"
+          fi
 
           echo "[OK] Mirror complete!"
           echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$DISTRIBUTION/images/$VERSION/"
