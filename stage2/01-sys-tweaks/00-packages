@@ -1,31 +1,18 @@
-ssh less sudo psmisc strace ed ncdu
+ssh less sudo psmisc
 console-setup keyboard-configuration debconf-utils parted
-bash-completion
-python-is-python3
 v4l-utils
-gpiod python3-libgpiod
-python3-gpiozero
-pigpio python3-pigpio raspi-gpio python3-rpi-lgpio
-python3-spidev
-python3-smbus2
 avahi-daemon
-lua5.1
-luajit
 ca-certificates curl
-fake-hwclock nfs-common usbutils
+fake-hwclock usbutils
 dosfstools
 dphys-swapfile
 raspberrypi-sys-mods
-pi-bluetooth
-apt-listchanges
 usb-modeswitch
 libpam-chksshpwd
 rpi-update
 rsync
 htop
-ssh-import-id
 ethtool
-ntfs-3g
 pciutils
 rpi-eeprom
 raspi-utils
