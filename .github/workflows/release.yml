@@ -297,8 +297,17 @@ jobs:
 
           echo "Found image: $IMAGE_PATH"
 
-          # Get the file extension
-          EXT="${IMAGE_PATH##*.}"
+          # Get the file extension (handle compound extensions like .img.xz)
+          FILENAME=$(basename "$IMAGE_PATH")
+          if [[ "$FILENAME" == *.img.xz ]]; then
+            EXT="img.xz"
+          elif [[ "$FILENAME" == *.img.gz ]]; then
+            EXT="img.gz"
+          elif [[ "$FILENAME" == *.img ]]; then
+            EXT="img"
+          else
+            EXT="${FILENAME##*.}"
+          fi
 
           # Rename to include version
           NEW_NAME="aircast-rpi-arm64-${VERSION}.${EXT}"
@@ -498,10 +507,10 @@ jobs:
           echo "Creating latest symlinks..."
           for file in aircast-rpi-arm64-*; do
             if [ -f "$file" ]; then
-              if [[ "$file" == *.zip ]]; then
-                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.zip" --acl public-read
-              elif [[ "$file" == *.sha256 ]]; then
-                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.zip.sha256" --acl public-read
+              if [[ "$file" == *.img.xz ]]; then
+                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.img.xz" --acl public-read
+              elif [[ "$file" == *.img.xz.sha256 ]]; then
+                aws s3 cp "$file" "$S3_PATH/latest/aircast-rpi-arm64-latest.img.xz.sha256" --acl public-read
               fi
             fi
           done
