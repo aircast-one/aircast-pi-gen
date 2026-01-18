@@ -511,13 +511,32 @@ jobs:
           MAIN_IMAGE=$(ls -S aircast-rpi-arm64-* 2>/dev/null | grep -v '.sha256$' | head -1)
           if [ -n "$MAIN_IMAGE" ]; then
             IMAGE_SIZE=$(stat -f%z "$MAIN_IMAGE" 2>/dev/null || stat -c%s "$MAIN_IMAGE")
-            IMAGE_EXTENSION="${MAIN_IMAGE##*v[0-9]*\.}"
+
+            # Extract extension using pattern matching (handle compound extensions)
+            if [[ "$MAIN_IMAGE" == *.img.xz ]]; then
+              IMAGE_EXTENSION="img.xz"
+            elif [[ "$MAIN_IMAGE" == *.img.gz ]]; then
+              IMAGE_EXTENSION="img.gz"
+            elif [[ "$MAIN_IMAGE" == *.img ]]; then
+              IMAGE_EXTENSION="img"
+            elif [[ "$MAIN_IMAGE" == *.zip ]]; then
+              IMAGE_EXTENSION="zip"
+            else
+              IMAGE_EXTENSION="${MAIN_IMAGE##*.}"
+            fi
+
             CHECKSUM_FILE="${MAIN_IMAGE}.sha256"
             HAS_CHECKSUM=$([ -f "$CHECKSUM_FILE" ] && echo "true" || echo "false")
+
+            # Validate extension was extracted
+            if [ -z "$IMAGE_EXTENSION" ]; then
+              echo "[ERROR] Failed to extract extension from: $MAIN_IMAGE"
+              exit 1
+            fi
+            echo "Extracted extension: $IMAGE_EXTENSION from $MAIN_IMAGE"
           else
-            IMAGE_SIZE=0
-            IMAGE_EXTENSION=""
-            HAS_CHECKSUM="false"
+            echo "[ERROR] No image file found for metadata"
+            exit 1
           fi
 
           cat > release-metadata.json << EOF
@@ -540,30 +559,78 @@ jobs:
           }
           EOF
 
-          aws s3 cp release-metadata.json "$S3_PATH/$VERSION/metadata.json" --acl public-read
+          # Atomic metadata upload
+          if ! aws s3 cp release-metadata.json "$S3_PATH/$VERSION/.tmp-metadata.json" --acl public-read; then
+            echo "[ERROR] Failed to upload metadata to temp location"
+            exit 1
+          fi
+          if ! aws s3 mv "$S3_PATH/$VERSION/.tmp-metadata.json" "$S3_PATH/$VERSION/metadata.json" --acl public-read; then
+            echo "[ERROR] Failed to move metadata to final location"
+            exit 1
+          fi
+          echo "[OK] Metadata uploaded: $S3_PATH/$VERSION/metadata.json"
 
-          # Update latest pointer for this distribution
+          # Atomic latest pointer update
           echo "$VERSION" > latest.txt
-          aws s3 cp latest.txt "$S3_PATH/latest.txt" --acl public-read
+          if ! aws s3 cp latest.txt "$S3_PATH/.tmp-latest.txt" --acl public-read; then
+            echo "[ERROR] Failed to upload latest.txt to temp location"
+            exit 1
+          fi
+          if ! aws s3 mv "$S3_PATH/.tmp-latest.txt" "$S3_PATH/latest.txt" --acl public-read; then
+            echo "[ERROR] Failed to move latest.txt to final location"
+            exit 1
+          fi
+          echo "[OK] Latest pointer updated: $S3_PATH/latest.txt"
 
-          # Create latest symlinks for direct download
-          # Find the main image file (largest non-checksum file)
+          # Create latest symlinks for direct download (atomic update)
           echo "Creating latest symlinks..."
           IMAGE_FILE=$(ls -S aircast-rpi-arm64-* 2>/dev/null | grep -v '.sha256$' | head -1)
           if [ -n "$IMAGE_FILE" ]; then
-            # Extract extension from filename (e.g., img.xz from aircast-rpi-arm64-v1.2.3.img.xz)
-            EXTENSION="${IMAGE_FILE#*.}"  # Remove everything before first dot, then take rest
-            EXTENSION="${IMAGE_FILE##*v[0-9]*\.}"  # Get extension after version number
+            # Extract extension using pattern matching (same logic as metadata)
+            if [[ "$IMAGE_FILE" == *.img.xz ]]; then
+              EXTENSION="img.xz"
+            elif [[ "$IMAGE_FILE" == *.img.gz ]]; then
+              EXTENSION="img.gz"
+            elif [[ "$IMAGE_FILE" == *.img ]]; then
+              EXTENSION="img"
+            elif [[ "$IMAGE_FILE" == *.zip ]]; then
+              EXTENSION="zip"
+            else
+              EXTENSION="${IMAGE_FILE##*.}"
+            fi
+
+            if [ -z "$EXTENSION" ]; then
+              echo "[ERROR] Failed to extract extension from: $IMAGE_FILE"
+              exit 1
+            fi
 
             echo "Found image: $IMAGE_FILE (extension: $EXTENSION)"
-            aws s3 cp "$IMAGE_FILE" "$S3_PATH/latest/aircast-rpi-arm64-latest.$EXTENSION" --acl public-read
+
+            # Upload to temp location first for atomic update
+            TEMP_PATH="$S3_PATH/latest/.tmp-aircast-rpi-arm64-latest.$EXTENSION"
+            FINAL_PATH="$S3_PATH/latest/aircast-rpi-arm64-latest.$EXTENSION"
+
+            if ! aws s3 cp "$IMAGE_FILE" "$TEMP_PATH" --acl public-read; then
+              echo "[ERROR] Failed to upload image to temp location"
+              exit 1
+            fi
+
+            # Atomic move from temp to final location
+            if ! aws s3 mv "$TEMP_PATH" "$FINAL_PATH" --acl public-read; then
+              echo "[ERROR] Failed to move image to final location"
+              aws s3 rm "$TEMP_PATH" 2>/dev/null || true
+              exit 1
+            fi
+
+            echo "[OK] Latest image updated: $FINAL_PATH"
 
             # Also copy checksum if it exists
             if [ -f "${IMAGE_FILE}.sha256" ]; then
               aws s3 cp "${IMAGE_FILE}.sha256" "$S3_PATH/latest/aircast-rpi-arm64-latest.$EXTENSION.sha256" --acl public-read
             fi
           else
-            echo "[WARN] No image file found for latest symlink"
+            echo "[ERROR] No image file found for latest symlink"
+            exit 1
           fi
 
           echo "[OK] Mirror complete!"
