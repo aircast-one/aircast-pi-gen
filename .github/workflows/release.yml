@@ -142,6 +142,7 @@ jobs:
           RELEASE=bookworm
           TARGET_HOSTNAME=aircast
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
+          DEPLOY_COMPRESSION=xz
           EOF
 
           echo "Configuration created"
