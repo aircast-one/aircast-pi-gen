@@ -543,14 +543,10 @@ jobs:
           echo "Image: $MAIN_IMAGE (extension: $IMAGE_EXTENSION, size: $IMAGE_SIZE)"
 
           # Fetch existing releases.json from S3 directly (bypass CDN cache)
-          # Use S3 API to get ETag for conditional write
           S3_KEY="$DISTRIBUTION/images/releases.json"
-          EXISTING_ETAG=""
 
-          if aws s3api head-object --bucket aircast-artifacts --key "$S3_KEY" > /tmp/head-object.json 2>/dev/null; then
-            EXISTING_ETAG=$(jq -r '.ETag' /tmp/head-object.json | tr -d '"')
-            echo "Found existing releases.json (ETag: $EXISTING_ETAG)"
-            aws s3 cp "s3://aircast-artifacts/$S3_KEY" existing-releases.json
+          if aws s3 cp "s3://aircast-artifacts/$S3_KEY" existing-releases.json 2>/dev/null; then
+            echo "Found existing releases.json"
           else
             echo "No existing releases.json, creating new"
             echo '{"releases":[]}' > existing-releases.json
