@@ -17,8 +17,9 @@ ALIGN="$((8 * 1024 * 1024))"
 # Add this much space to the calculated file size. This allows for
 # some overhead (since actual space usage is usually rounded up to the
 # filesystem block size) and gives some free space on the resulting
-# image.
-ROOT_MARGIN="$(echo "($ROOT_SIZE * 0.2 + 200 * 1024 * 1024) / 1" | bc)"
+# image. Extra margin needed for kernel upgrades during dist-upgrade
+# and initramfs regeneration.
+ROOT_MARGIN="$(echo "($ROOT_SIZE * 0.25 + 512 * 1024 * 1024) / 1" | bc)"
 
 BOOT_PART_START=$((ALIGN))
 BOOT_PART_SIZE=$(((BOOT_SIZE + ALIGN - 1) / ALIGN * ALIGN))
