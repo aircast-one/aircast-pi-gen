@@ -1,0 +1,15 @@
+# Aircast - USB stability rules for flight controllers
+# Disables USB autosuspend for flight controllers to prevent
+# DWC2 disconnect/reconnect bug on Pi Zero 2W (raspberrypi/linux#6247)
+
+# ArduPilot flight controllers (Cube Orange, Pixhawk, etc.)
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
+
+# PX4/Pixhawk flight controllers
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="26ac", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
+
+# STM32 CDC ACM devices (common in flight controllers)
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
+
+# Holybro flight controllers
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="3162", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"

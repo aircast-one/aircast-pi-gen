@@ -14,3 +14,7 @@ echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] https://aircast-apt.s3.us-
 apt-get update
 apt-get install -y aircast-agent
 EOF
+
+# Install USB stability udev rules for flight controllers
+# Disables autosuspend to prevent DWC2 disconnect bug on Pi Zero 2W
+install -m 644 files/99-aircast-usb-stability.rules "${ROOTFS_DIR}/etc/udev/rules.d/"
