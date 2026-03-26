@@ -34,7 +34,7 @@ env:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
@@ -375,7 +375,7 @@ jobs:
 
   release:
     needs: [prepare, build]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
@@ -423,7 +423,7 @@ jobs:
   mirror-to-s3:
     needs: [prepare, build, release]
     if: needs.release.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Configure AWS credentials
@@ -666,7 +666,7 @@ jobs:
   notify:
     needs: [prepare, build, release, mirror-to-s3]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Generate build summary
