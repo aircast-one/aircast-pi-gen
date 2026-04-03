@@ -123,6 +123,12 @@ jobs:
         with:
           platforms: arm64
 
+      - name: Clean up stale buildx builders
+        run: |
+          for b in $(docker buildx ls --format '{{.Name}}' | grep '^builder-'); do
+            docker buildx rm "$b" 2>/dev/null || true
+          done
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
