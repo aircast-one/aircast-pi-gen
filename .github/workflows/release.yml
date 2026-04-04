@@ -34,7 +34,7 @@ env:
 
 jobs:
   prepare:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
@@ -91,7 +91,7 @@ jobs:
 
   build:
     needs: prepare
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
@@ -381,7 +381,7 @@ jobs:
 
   release:
     needs: [prepare, build]
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
@@ -429,7 +429,7 @@ jobs:
   mirror-to-s3:
     needs: [prepare, build, release]
     if: needs.release.result == 'success'
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
 
     steps:
       - name: Configure AWS credentials
@@ -474,15 +474,19 @@ jobs:
           echo "Uploading to S3 ($S3_PATH)..."
 
           # Determine CloudFront domain based on distribution
-          # Both CloudFront distributions have OriginPath set to their distribution folder,
+          # Each CloudFront distribution has OriginPath set to its distribution folder,
           # so URLs don't include the distribution in the path
-          # - downloads.dev.aircast.one has OriginPath="/development"
-          # - downloads.aircast.one has OriginPath="/stable"
-          if [ "$DISTRIBUTION" == "development" ]; then
-            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
-          else
-            DOWNLOADS_DOMAIN="downloads.aircast.one"
-          fi
+          case "$DISTRIBUTION" in
+            "development")
+              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              DOWNLOADS_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
           URL_PATH="images"
 
           # Upload all image files and checksums with verification
@@ -633,12 +637,17 @@ jobs:
           echo "Invalidating CloudFront cache..."
 
           # Determine CloudFront domain based on distribution
-          # Both CloudFront distributions have OriginPath set, so URLs use /images directly
-          if [ "$DISTRIBUTION" == "development" ]; then
-            CF_DOMAIN="downloads.dev.aircast.one"
-          else
-            CF_DOMAIN="downloads.aircast.one"
-          fi
+          case "$DISTRIBUTION" in
+            "development")
+              CF_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              CF_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              CF_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
           URL_PATH="images"
 
           # Find CloudFront distribution
@@ -672,7 +681,7 @@ jobs:
   notify:
     needs: [prepare, build, release, mirror-to-s3]
     if: always()
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
 
     steps:
       - name: Generate build summary
@@ -694,12 +703,17 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Determine downloads domain based on distribution
-          # Both CloudFront distributions have OriginPath set, so URLs use /images directly
-          if [ "$DISTRIBUTION" == "development" ]; then
-            DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
-          else
-            DOWNLOADS_DOMAIN="downloads.aircast.one"
-          fi
+          case "$DISTRIBUTION" in
+            "development")
+              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              DOWNLOADS_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
           URL_PATH="images"
 
           if [ "${{ needs.release.result }}" == "success" ]; then
