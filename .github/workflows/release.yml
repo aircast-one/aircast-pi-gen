@@ -385,10 +385,17 @@ jobs:
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
+      - name: Clean workspace
+        run: |
+          # Self-hosted runner: remove any leftover artifacts from previous runs
+          # so globs and downloads only see files from the current build.
+          rm -f aircast-rpi-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: pi-image
+          path: release-assets
 
       - name: Create GitHub Release
         id: create_release
@@ -419,12 +426,10 @@ jobs:
             SHA256 checksums are provided for verification.
           draft: false
           prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
+          fail_on_unmatched_files: true
           files: |
-            aircast-rpi-arm64-*.zip
-            aircast-rpi-arm64-*.img
-            aircast-rpi-arm64-*.img.gz
-            aircast-rpi-arm64-*.img.xz
-            aircast-rpi-arm64-*.sha256
+            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz
+            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz.sha256
 
   mirror-to-s3:
     needs: [prepare, build, release]
@@ -461,13 +466,19 @@ jobs:
 
           echo "Found release: $RELEASE_URL"
 
-          # Create temp directory for downloads
+          # Create clean temp directory for downloads
+          # Self-hosted runner: ensure no stale files from previous runs
+          rm -rf temp-assets
           mkdir -p temp-assets
           cd temp-assets
 
-          # Download all release assets
-          echo "Downloading release assets..."
-          gh release download $VERSION -R ${{ github.repository }}
+          # Download only assets matching the current version.
+          # Pattern matching guards against any stale assets that might have been
+          # attached to this release by earlier failed/partial runs.
+          echo "Downloading release assets for $VERSION..."
+          gh release download "$VERSION" -R ${{ github.repository }} \
+            --pattern "aircast-rpi-arm64-${VERSION}.img.xz" \
+            --pattern "aircast-rpi-arm64-${VERSION}.img.xz.sha256"
 
           # Upload to S3 (use distribution-based path)
           S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
@@ -522,10 +533,12 @@ jobs:
           # Update releases.json (single source of truth for all versions)
           echo "Updating releases.json..."
 
-          # Find the main image file (largest non-checksum file)
-          MAIN_IMAGE=$(ls -S aircast-rpi-arm64-* 2>/dev/null | grep -v '.sha256$' | head -1)
-          if [ -z "$MAIN_IMAGE" ]; then
-            echo "[ERROR] No image file found"
+          # Select the image by exact version match — never by filesystem sort/size,
+          # which is fragile if stale files are ever present.
+          MAIN_IMAGE="aircast-rpi-arm64-${VERSION}.img.xz"
+          if [ ! -f "$MAIN_IMAGE" ]; then
+            echo "[ERROR] Expected image file not found: $MAIN_IMAGE"
+            ls -la aircast-rpi-arm64-* 2>/dev/null || true
             exit 1
           fi
 
