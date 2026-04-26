@@ -13,4 +13,5 @@ RUN apt-get -y update && \
 
 COPY . /pi-gen/
 
-VOLUME [ "/pi-gen/work", "/pi-gen/deploy"]
+# Note: Not using VOLUME here. Work/deploy directories are created at runtime.
+# docker cp is used to inject cached stages and extract results.

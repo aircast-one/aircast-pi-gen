@@ -98,19 +98,19 @@ else
   DOCKER_CMDLINE_POST=""
 fi
 
-# Mount work directory for incremental builds (if it has cached rootfs)
+# Detect cached stages for incremental builds
 # Pi-gen uses work/${IMG_NAME}/stage*/rootfs structure
-WORK_MOUNT=""
-if [ -d "${DIR}/work/${IMG_NAME}/stage2/rootfs" ]; then
-  echo "Found cached stage2 rootfs at ${DIR}/work/${IMG_NAME}/stage2/rootfs"
-  echo "Mounting work directory for incremental build..."
-  WORK_MOUNT="-v ${DIR}/work:/pi-gen/work"
+WORK_DIR_HOST="${DIR}/work"
+INJECT_WORK=0
+if [ -d "${WORK_DIR_HOST}/${IMG_NAME}/stage2/rootfs" ]; then
+  echo "Found cached stage2 rootfs at ${WORK_DIR_HOST}/${IMG_NAME}/stage2/rootfs"
+  INJECT_WORK=1
   INCREMENTAL=1
   # Auto-detect which stages to skip based on existing rootfs
   if [ -z "${SKIP_STAGES}" ]; then
     SKIP_STAGES=""
     for stage in stage0 stage1 stage2; do
-      if [ -d "${DIR}/work/${IMG_NAME}/${stage}/rootfs" ]; then
+      if [ -d "${WORK_DIR_HOST}/${IMG_NAME}/${stage}/rootfs" ]; then
         SKIP_STAGES="${SKIP_STAGES} ${stage}"
       fi
     done
@@ -166,19 +166,12 @@ if [[ "${binfmt_misc_required}" == "1" ]]; then
 fi
 
 trap 'echo "got CTRL+C... please wait 5s" && ${DOCKER} stop -t 5 ${DOCKER_CMDLINE_NAME}' SIGINT SIGTERM
-time ${DOCKER} run \
-  $DOCKER_CMDLINE_PRE \
-  --name "${DOCKER_CMDLINE_NAME}" \
-  --privileged \
-  ${PIGEN_DOCKER_OPTS} \
-  ${WORK_MOUNT} \
-  --volume "${CONFIG_FILE}":/config:ro \
-  -e "GIT_HASH=${GIT_HASH}" \
-  -e "SKIP_STAGES=${SKIP_STAGES}" \
-  -e "AIRCAST_DISTRIBUTION=${AIRCAST_DISTRIBUTION}" \
-  $DOCKER_CMDLINE_POST \
-  pi-gen \
-  bash -e -o pipefail -c "
+
+# Use docker create + docker cp + docker start instead of bind mounts.
+# Bind mounts fail in Docker-in-Docker setups (e.g., containerized runners)
+# because -v paths reference the Docker daemon's host filesystem, not the
+# runner's filesystem. docker cp always works from the client's filesystem.
+BUILD_CMD="
     dpkg-reconfigure qemu-user-static &&
     # binfmt_misc is sometimes not mounted with debian bookworm image
     (mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc || true) &&
@@ -195,19 +188,59 @@ time ${DOCKER} run \
     fi
     ./build.sh ${BUILD_OPTS} &&
     rsync -av work/*/build.log deploy/
-  " &
+"
+
+if [ "${INJECT_WORK}" == "1" ]; then
+  # Incremental build: create container, inject cached work dir via docker cp, then start.
+  # This avoids bind mounts which fail in Docker-in-Docker (containerized runners)
+  # where -v paths reference the daemon host's filesystem, not the runner's.
+  echo "Using docker cp to inject cached stages (DinD-compatible)..."
+
+  ${DOCKER} create \
+    --name "${DOCKER_CMDLINE_NAME}" \
+    --privileged \
+    ${PIGEN_DOCKER_OPTS} \
+    --volume "${CONFIG_FILE}":/config:ro \
+    -e "GIT_HASH=${GIT_HASH}" \
+    -e "SKIP_STAGES=${SKIP_STAGES}" \
+    -e "AIRCAST_DISTRIBUTION=${AIRCAST_DISTRIBUTION}" \
+    $DOCKER_CMDLINE_POST \
+    pi-gen \
+    bash -e -o pipefail -c "${BUILD_CMD}"
+
+  # Copy cached work directory into the stopped container
+  echo "Copying cached stages into container..."
+  sudo tar -C "${WORK_DIR_HOST}" -cf - . | ${DOCKER} cp - "${DOCKER_CMDLINE_NAME}":/pi-gen/work/
+  echo "Cached stages injected successfully"
+
+  # Start the container and follow output
+  time ${DOCKER} start -a "${DOCKER_CMDLINE_NAME}" &
   wait "$!"
+else
+  # Full build: no cached stages, run directly
+  time ${DOCKER} run \
+    $DOCKER_CMDLINE_PRE \
+    --name "${DOCKER_CMDLINE_NAME}" \
+    --privileged \
+    ${PIGEN_DOCKER_OPTS} \
+    --volume "${CONFIG_FILE}":/config:ro \
+    -e "GIT_HASH=${GIT_HASH}" \
+    -e "SKIP_STAGES=${SKIP_STAGES}" \
+    -e "AIRCAST_DISTRIBUTION=${AIRCAST_DISTRIBUTION}" \
+    $DOCKER_CMDLINE_POST \
+    pi-gen \
+    bash -e -o pipefail -c "${BUILD_CMD}" &
+    wait "$!"
+fi
 
 # Ensure that deploy/ is always owned by calling user
 echo "copying results from deploy/"
 ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/deploy - | tar -xf -
 
-# Copy work directory back for caching (only if not already mounted)
+# Copy work directory back for caching
 # Use sudo tar to preserve ownership (rootfs has various UIDs like 1000 for pi user)
-if [ -z "${WORK_MOUNT}" ]; then
-  echo "copying work directory from container for caching..."
-  ${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/work - | sudo tar -xf - 2>/dev/null || true
-fi
+echo "copying work directory from container for caching..."
+${DOCKER} cp "${CONTAINER_NAME}":/pi-gen/work - | sudo tar -xf - 2>/dev/null || true
 
 echo "copying log from container ${CONTAINER_NAME} to deploy/"
 ${DOCKER} logs --timestamps "${CONTAINER_NAME}" &>deploy/build-docker.log
