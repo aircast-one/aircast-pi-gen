@@ -1,0 +1,25 @@
+#!/bin/bash -e
+
+# Install aircast-agent
+# Use AIRCAST_DISTRIBUTION env var (required)
+DISTRIBUTION="${AIRCAST_DISTRIBUTION}"
+echo "Installing aircast-agent from ${DISTRIBUTION} channel"
+
+on_chroot << EOF
+# Add aircast-agent repository
+curl -s https://aircast-apt.s3.us-east-1.amazonaws.com/public-key.gpg | gpg --dearmor -o /usr/share/keyrings/aircast.gpg
+echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] https://aircast-apt.s3.us-east-1.amazonaws.com ${DISTRIBUTION} main" > /etc/apt/sources.list.d/aircast-agent.list
+
+# Update and install
+apt-get update
+apt-get install -y aircast-agent
+EOF
+
+# Install USB stability udev rules for flight controllers
+# Disables autosuspend to prevent DWC2 disconnect bug on Pi Zero 2W
+install -m 644 files/99-aircast-usb-stability.rules "${ROOTFS_DIR}/etc/udev/rules.d/"
+
+# Load qmi_wwan kernel module at boot for QMI cellular modem support
+# Required for SIM7600G-H and similar Qualcomm modems in QMI mode
+mkdir -p "${ROOTFS_DIR}/etc/modules-load.d"
+echo "qmi_wwan" > "${ROOTFS_DIR}/etc/modules-load.d/qmi-wwan.conf"

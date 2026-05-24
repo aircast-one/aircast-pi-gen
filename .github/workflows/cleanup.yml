@@ -1,0 +1,26 @@
+name: Cleanup
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Weekly on Sunday at 3am UTC
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: self-hosted
+    steps:
+      - name: Delete old workflow artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Deleting workflow artifacts older than 3 days..."
+          gh api repos/${{ github.repository }}/actions/artifacts --paginate -q '.artifacts[] | select(.expired == false) | "\(.id) \(.created_at)"' | while read ID DATE; do
+            AGE_DAYS=$(( ($(date +%s) - $(date -d "$DATE" +%s)) / 86400 ))
+            if [ "$AGE_DAYS" -gt 3 ]; then
+              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$ID 2>/dev/null && echo "Deleted artifact $ID (${AGE_DAYS}d old)"
+            fi
+          done
+          echo "Cleanup complete"

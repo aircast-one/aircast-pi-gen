@@ -1,0 +1,772 @@
+name: Build and Release Pi Images
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  repository-projects: write
+
+on:
+  # Triggered by aircast-agent releases
+  repository_dispatch:
+    types: [build-development-image, build-staging-image, build-testing-image, build-production-image]
+
+  # Manual trigger for testing/emergency builds
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g., v1.0.0, v1.0.0-rc.1, v1.0.0-dev.1)'
+        required: true
+        type: string
+      distribution:
+        description: 'Distribution channel'
+        required: true
+        type: choice
+        options:
+          - stable
+          - testing
+          - staging
+          - development
+        default: stable
+
+env:
+  IMG_NAME: aircast-rpi-arm64
+
+jobs:
+  prepare:
+    runs-on: [self-hosted, Linux]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      distribution: ${{ steps.version.outputs.distribution }}
+      environment: ${{ steps.version.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version and distribution
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            # Triggered by aircast-agent release
+            VERSION="${{ github.event.client_payload.version }}"
+
+            # Determine distribution from event type
+            case "${{ github.event.action }}" in
+              "build-development-image")
+                DISTRIBUTION="development"
+                ;;
+              "build-staging-image")
+                DISTRIBUTION="staging"
+                ;;
+              "build-testing-image")
+                DISTRIBUTION="testing"
+                ;;
+              "build-production-image")
+                DISTRIBUTION="stable"
+                ;;
+            esac
+
+            echo "Triggered by: ${{ github.event.client_payload.trigger }}"
+            echo "Agent version: $VERSION"
+          else
+            # Manual dispatch
+            VERSION="${{ inputs.version }}"
+            DISTRIBUTION="${{ inputs.distribution }}"
+          fi
+
+          # Set environment based on distribution
+          case "$DISTRIBUTION" in
+            "development"|"staging")
+              ENVIRONMENT="development"
+              ;;
+            *)
+              ENVIRONMENT="production"
+              ;;
+          esac
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT)"
+
+  build:
+    needs: prepare
+    runs-on: [self-hosted, Linux]
+    environment: ${{ needs.prepare.outputs.environment }}
+
+    steps:
+      - name: Pre-cleanup (remove leftover work directories)
+        run: |
+          # Clean up any leftover work directories from previous builds
+          # These contain root-owned files that would cause checkout to fail
+          if [ -d "work" ]; then
+            echo "Found leftover work directory, cleaning up..."
+            sudo rm -rf work/
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=60 update
+          sudo apt-get -o DPkg::Lock::Timeout=60 install -y \
+            coreutils quilt parted qemu-user-static debootstrap zerofree zip \
+            dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
+            gpg pigz xxd arch-test bmap-tools
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Clean up stale buildx builders
+        run: |
+          for b in $(docker buildx ls --format '{{.Name}}' | grep '^builder-'); do
+            docker buildx rm "$b" 2>/dev/null || true
+          done
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+          install: true
+
+      - name: Create build configuration
+        run: |
+          echo "Creating build configuration..."
+          cat > config << EOF
+          IMG_NAME='aircast-rpi-arm64'
+          ENABLE_SSH=1
+          FIRST_USER_NAME=pi
+          FIRST_USER_PASS=raspberry
+          DISABLE_FIRST_BOOT_USER_RENAME=1
+          STAGE_LIST="stage0 stage1 stage2 stage3"
+          RELEASE=bookworm
+          TARGET_HOSTNAME=aircast
+          PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
+          DEPLOY_COMPRESSION=xz
+          EOF
+
+          echo "Configuration created"
+
+      - name: Setup persistent cache (self-hosted optimization)
+        id: cache-setup
+        run: |
+          CACHE_BASE=/opt/pi-gen-cache
+          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
+          echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
+
+          # Ensure cache directory exists with correct permissions
+          # IMPORTANT: Do NOT use -R (recursive) here - rootfs files need to keep their original UIDs
+          sudo mkdir -p "$CACHE_BASE"/{work,apt-archives}
+          sudo chown $USER:$USER "$CACHE_BASE" "$CACHE_BASE/work" "$CACHE_BASE/apt-archives"
+
+          # Check if we have valid cached stage2 with rootfs
+          if [ -d "$CACHE_WORK_DIR/stage2/rootfs" ]; then
+            echo "Found cached stage2 rootfs - enabling incremental build"
+            echo "cache_hit=true" >> $GITHUB_OUTPUT
+
+            # Restore cached stages to work directory (build-docker.sh will detect and mount)
+            # Use sudo rsync -a to preserve ownership/permissions (rootfs has various UIDs)
+            sudo mkdir -p "work/${{ env.IMG_NAME }}"
+            for stage in stage0 stage1 stage2; do
+              if [ -d "$CACHE_WORK_DIR/$stage" ]; then
+                echo "Restoring $stage from cache..."
+                sudo rsync -a "$CACHE_WORK_DIR/$stage/" "work/${{ env.IMG_NAME }}/$stage/"
+                echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
+              fi
+            done
+            echo "Cache restored - build-docker.sh will auto-detect and skip cached stages"
+          else
+            echo "No valid cache found - will run full build"
+            echo "cache_hit=false" >> $GITHUB_OUTPUT
+            echo "Expected cache at: $CACHE_WORK_DIR/stage2/rootfs"
+          fi
+
+          # Setup apt cache for faster debootstrap
+          sudo mkdir -p /var/cache/apt/archives
+          if [ -d "$CACHE_BASE/apt-archives" ] && [ "$(ls -A $CACHE_BASE/apt-archives 2>/dev/null)" ]; then
+            echo "Restoring apt package cache..."
+            sudo cp -n "$CACHE_BASE/apt-archives"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fi
+
+      - name: Clean up Docker containers
+        run: |
+          echo "Cleaning up any existing Docker containers..."
+          docker rm -f pigen_work 2>/dev/null || true
+          docker rm -f pigen_work_cont 2>/dev/null || true
+          echo "Container cleanup completed"
+
+      - name: Build Pi image with Docker
+        env:
+          PRESERVE_CONTAINER: 1
+          AIRCAST_DISTRIBUTION: ${{ needs.prepare.outputs.distribution }}
+        run: |
+          echo "Starting Docker-based build..."
+          echo "Cache status: ${{ steps.cache-setup.outputs.cache_hit }}"
+          echo "Distribution: $AIRCAST_DISTRIBUTION"
+
+          # build-docker.sh auto-detects cached stages and handles incremental builds
+          ./build-docker.sh
+
+          echo "Build completed successfully!"
+
+      - name: Save cache for next build
+        if: success()
+        run: |
+          CACHE_BASE=/opt/pi-gen-cache
+          WORK_DIR="work/${{ env.IMG_NAME }}"
+          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
+          echo "Saving build artifacts to persistent cache..."
+
+          # Save stage rootfs for incremental builds
+          # Use sudo to preserve ownership/permissions (rootfs has various UIDs like 1000 for pi user)
+          for stage in stage0 stage1 stage2; do
+            if [ -d "$WORK_DIR/$stage/rootfs" ]; then
+              echo "Caching $stage..."
+              sudo mkdir -p "$CACHE_WORK_DIR/$stage"
+              sudo rsync -a --delete "$WORK_DIR/$stage/" "$CACHE_WORK_DIR/$stage/"
+              echo "  Saved: $(du -sh $CACHE_WORK_DIR/$stage | cut -f1)"
+            else
+              echo "  $stage/rootfs not found at $WORK_DIR/$stage/rootfs"
+            fi
+          done
+
+          # Save apt packages for faster debootstrap
+          if [ -d /var/cache/apt/archives ]; then
+            echo "Caching apt packages..."
+            mkdir -p "$CACHE_BASE/apt-archives"
+            sudo cp -n /var/cache/apt/archives/*.deb "$CACHE_BASE/apt-archives/" 2>/dev/null || true
+            echo "  Cached: $(ls $CACHE_BASE/apt-archives/*.deb 2>/dev/null | wc -l) packages"
+          fi
+
+          echo "Cache saved successfully!"
+
+      - name: Build Statistics
+        if: always()
+        run: |
+          echo "Build Statistics:"
+          echo "==================="
+
+          # Check cache hit rate and estimate time savings
+          if [ "${{ steps.cache-setup.outputs.cache_hit }}" == "true" ]; then
+            echo "Build type: INCREMENTAL (cached stages 0-2)"
+            echo "Estimated time saved: ~30-40 minutes"
+          else
+            echo "Build type: FULL (no cache)"
+            echo "Cache will be saved for next build"
+          fi
+
+          # Show stage sizes (pi-gen uses work/IMG_NAME/stage* structure)
+          WORK_DIR="work/${{ env.IMG_NAME }}"
+          echo ""
+          echo "Stage sizes:"
+          for stage in stage0 stage1 stage2 stage3; do
+            if [ -d "$WORK_DIR/$stage" ]; then
+              SIZE=$(du -sh "$WORK_DIR/$stage" 2>/dev/null | cut -f1 || echo "N/A")
+              SKIP=""
+              [ -f "$WORK_DIR/$stage/SKIP" ] && SKIP=" (skipped)"
+              echo "  - $stage: $SIZE$SKIP"
+            fi
+          done
+
+          # Show cache directory size
+          CACHE_BASE=/opt/pi-gen-cache
+          if [ -d "$CACHE_BASE" ]; then
+            echo ""
+            echo "Persistent cache size: $(du -sh $CACHE_BASE 2>/dev/null | cut -f1)"
+          fi
+
+          # Show build logs
+          if [ -f deploy/build-docker.log ]; then
+            echo ""
+            echo "Build time:"
+            grep -E "real|user|sys" deploy/build-docker.log | tail -3 || true
+          fi
+
+      - name: Prepare artifacts
+        id: artifacts
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+
+          # Find the generated image
+          IMAGE_PATH=$(find deploy -name "*.zip" -o -name "*.img" -o -name "*.img.gz" -o -name "*.img.xz" | head -n 1)
+
+          if [ -z "$IMAGE_PATH" ]; then
+            echo "No image found in deploy directory"
+            exit 1
+          fi
+
+          echo "Found image: $IMAGE_PATH"
+
+          # Get the file extension (handle compound extensions like .img.xz)
+          FILENAME=$(basename "$IMAGE_PATH")
+          if [[ "$FILENAME" == *.img.xz ]]; then
+            EXT="img.xz"
+          elif [[ "$FILENAME" == *.img.gz ]]; then
+            EXT="img.gz"
+          elif [[ "$FILENAME" == *.img ]]; then
+            EXT="img"
+          else
+            EXT="${FILENAME##*.}"
+          fi
+
+          # Rename to include version
+          NEW_NAME="aircast-rpi-arm64-${VERSION}.${EXT}"
+          cp "$IMAGE_PATH" "$NEW_NAME"
+
+          echo "image_path=$NEW_NAME" >> $GITHUB_OUTPUT
+          echo "image_name=$NEW_NAME" >> $GITHUB_OUTPUT
+
+          # Create checksums
+          sha256sum "$NEW_NAME" > "${NEW_NAME}.sha256"
+
+          echo "Prepared artifact: $NEW_NAME"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-image
+          path: |
+            ${{ steps.artifacts.outputs.image_path }}
+            ${{ steps.artifacts.outputs.image_path }}.sha256
+
+      - name: Cleanup build artifacts
+        if: always()
+        run: |
+          echo "Cleaning up build artifacts to free disk space..."
+          echo "Note: Persistent cache at /opt/pi-gen-cache is preserved for incremental builds"
+
+          # Remove pi-gen work directory (9GB+)
+          # This is separate from the cache in /opt/pi-gen-cache
+          if [ -d "work" ]; then
+            echo "Removing work directory..."
+            sudo rm -rf work/
+            echo "  Work directory removed"
+          fi
+
+          # Remove deploy directory (build outputs already uploaded)
+          if [ -d "deploy" ]; then
+            echo "Removing deploy directory..."
+            rm -rf deploy/
+            echo "  Deploy directory removed"
+          fi
+
+          # Stop and remove pi-gen container
+          echo "Cleaning up Docker containers..."
+          docker rm -f pigen_work 2>/dev/null && echo "  Removed pigen_work container" || true
+          docker rm -f pigen_work_cont 2>/dev/null && echo "  Removed pigen_work_cont container" || true
+
+          # Remove dangling Docker volumes (pi-gen creates anonymous volumes)
+          echo "Cleaning up Docker volumes..."
+          DANGLING_VOLUMES=$(docker volume ls -qf dangling=true)
+          if [ -n "$DANGLING_VOLUMES" ]; then
+            docker volume rm $DANGLING_VOLUMES 2>/dev/null && echo "  Removed dangling volumes" || true
+          fi
+
+          # Prune unused Docker resources (excludes named volumes used by other services)
+          echo "Pruning unused Docker resources..."
+          docker system prune -f 2>/dev/null || true
+
+          # Show disk usage after cleanup
+          echo ""
+          echo "Disk usage after cleanup:"
+          df -h / | tail -1
+
+          echo "[OK] Cleanup completed"
+
+  release:
+    needs: [prepare, build]
+    runs-on: [self-hosted, Linux]
+    environment: ${{ needs.prepare.outputs.environment }}
+
+    steps:
+      - name: Clean workspace
+        run: |
+          # Self-hosted runner: remove any leftover artifacts from previous runs
+          # so globs and downloads only see files from the current build.
+          rm -f aircast-rpi-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pi-image
+          path: release-assets
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: Aircast Pi Image ${{ needs.prepare.outputs.version }}
+          body: |
+            ## Aircast Raspberry Pi Image
+
+            **Channel:** ${{ needs.prepare.outputs.distribution }}
+
+            ### Installation
+            1. Download the image file
+            2. Flash it to an SD card using Raspberry Pi Imager or similar tool
+            3. Insert the SD card into your Raspberry Pi and boot
+
+            ### Default Credentials
+            - Username: `pi`
+            - Password: `raspberry`
+            - Hostname: `aircast`
+
+            **Important**: Please change the default password after first login!
+
+            ### Checksums
+            SHA256 checksums are provided for verification.
+          draft: false
+          prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz
+            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz.sha256
+
+  mirror-to-s3:
+    needs: [prepare, build, release]
+    if: needs.release.result == 'success'
+    runs-on: [self-hosted, Linux]
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Wait for GitHub release
+        run: |
+          echo "Waiting for GitHub release to be fully available..."
+          sleep 30  # Give GitHub time to process the release
+
+      - name: Download and mirror release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+          echo "Fetching release assets for $VERSION ($DISTRIBUTION)..."
+
+          # Get release info
+          RELEASE_INFO=$(gh api repos/${{ github.repository }}/releases/tags/$VERSION)
+          RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
+          RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.html_url')
+          RELEASE_BODY=$(echo "$RELEASE_INFO" | jq -r '.body')
+          CREATED_AT=$(echo "$RELEASE_INFO" | jq -r '.created_at')
+
+          echo "Found release: $RELEASE_URL"
+
+          # Create clean temp directory for downloads
+          # Self-hosted runner: ensure no stale files from previous runs
+          rm -rf temp-assets
+          mkdir -p temp-assets
+          cd temp-assets
+
+          # Download only assets matching the current version.
+          # Pattern matching guards against any stale assets that might have been
+          # attached to this release by earlier failed/partial runs.
+          echo "Downloading release assets for $VERSION..."
+          gh release download "$VERSION" -R ${{ github.repository }} \
+            --pattern "aircast-rpi-arm64-${VERSION}.img.xz" \
+            --pattern "aircast-rpi-arm64-${VERSION}.img.xz.sha256"
+
+          # Upload to S3 (use distribution-based path)
+          S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
+          echo "Uploading to S3 ($S3_PATH)..."
+
+          # Determine CloudFront domain based on distribution
+          # Each CloudFront distribution has OriginPath set to its distribution folder,
+          # so URLs don't include the distribution in the path
+          case "$DISTRIBUTION" in
+            "development")
+              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              DOWNLOADS_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
+          URL_PATH="images"
+
+          # Upload all image files and checksums with verification
+          UPLOAD_FAILED=false
+          for file in aircast-rpi-arm64-*; do
+            if [ -f "$file" ]; then
+              echo "Uploading: $file"
+              LOCAL_SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+
+              # Upload with checksum verification
+              if ! aws s3 cp "$file" "$S3_PATH/$VERSION/$file" --acl public-read; then
+                echo "[ERROR] Failed to upload $file"
+                UPLOAD_FAILED=true
+                continue
+              fi
+
+              # Verify upload by checking file exists and size matches
+              REMOTE_SIZE=$(aws s3api head-object --bucket aircast-artifacts --key "$DISTRIBUTION/images/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
+              if [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
+                echo "[ERROR] Size mismatch for $file: local=$LOCAL_SIZE, remote=$REMOTE_SIZE"
+                UPLOAD_FAILED=true
+              else
+                echo "[OK] Verified: $file ($LOCAL_SIZE bytes)"
+              fi
+            fi
+          done
+
+          if [ "$UPLOAD_FAILED" = true ]; then
+            echo "[ERROR] One or more uploads failed verification"
+            exit 1
+          fi
+
+          # Update releases.json (single source of truth for all versions)
+          echo "Updating releases.json..."
+
+          # Select the image by exact version match — never by filesystem sort/size,
+          # which is fragile if stale files are ever present.
+          MAIN_IMAGE="aircast-rpi-arm64-${VERSION}.img.xz"
+          if [ ! -f "$MAIN_IMAGE" ]; then
+            echo "[ERROR] Expected image file not found: $MAIN_IMAGE"
+            ls -la aircast-rpi-arm64-* 2>/dev/null || true
+            exit 1
+          fi
+
+          IMAGE_SIZE=$(stat -f%z "$MAIN_IMAGE" 2>/dev/null || stat -c%s "$MAIN_IMAGE")
+
+          # Extract extension using pattern matching
+          if [[ "$MAIN_IMAGE" == *.img.xz ]]; then
+            IMAGE_EXTENSION="img.xz"
+          elif [[ "$MAIN_IMAGE" == *.img.gz ]]; then
+            IMAGE_EXTENSION="img.gz"
+          elif [[ "$MAIN_IMAGE" == *.img ]]; then
+            IMAGE_EXTENSION="img"
+          elif [[ "$MAIN_IMAGE" == *.zip ]]; then
+            IMAGE_EXTENSION="zip"
+          else
+            IMAGE_EXTENSION="${MAIN_IMAGE##*.}"
+          fi
+
+          if [ -z "$IMAGE_EXTENSION" ]; then
+            echo "[ERROR] Failed to extract extension from: $MAIN_IMAGE"
+            exit 1
+          fi
+
+          # Validate checksum file exists (should always be generated in Prepare artifacts step)
+          CHECKSUM_FILE="${MAIN_IMAGE}.sha256"
+          if [ ! -f "$CHECKSUM_FILE" ]; then
+            echo "[ERROR] Checksum file not found: $CHECKSUM_FILE"
+            exit 1
+          fi
+
+          echo "Image: $MAIN_IMAGE (extension: $IMAGE_EXTENSION, size: $IMAGE_SIZE)"
+
+          # Fetch existing releases.json from S3 directly (bypass CDN cache)
+          S3_KEY="$DISTRIBUTION/images/releases.json"
+
+          if aws s3 cp "s3://aircast-artifacts/$S3_KEY" existing-releases.json 2>/dev/null; then
+            echo "Found existing releases.json"
+          else
+            echo "No existing releases.json, creating new"
+            echo '{"releases":[]}' > existing-releases.json
+          fi
+
+          # Create new release entry using jq (no heredoc indentation issues)
+          jq -n \
+            --arg version "$VERSION" \
+            --argjson prerelease "${{ needs.prepare.outputs.distribution != 'stable' }}" \
+            --arg created_at "$CREATED_AT" \
+            --arg filename "$MAIN_IMAGE" \
+            --arg extension "$IMAGE_EXTENSION" \
+            --argjson size "$IMAGE_SIZE" \
+            --arg download_url "https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/$MAIN_IMAGE" \
+            --arg checksum_url "https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/$CHECKSUM_FILE" \
+            '{
+              version: $version,
+              prerelease: $prerelease,
+              created_at: $created_at,
+              image: {
+                filename: $filename,
+                extension: $extension,
+                size: $size,
+                download_url: $download_url,
+                checksum_url: $checksum_url
+              }
+            }' > new-release.json
+
+          # Prepend new release and remove duplicate if exists (re-release scenario)
+          jq --slurpfile new new-release.json \
+            '.releases = [$new[0]] + [.releases[] | select(.version != $new[0].version)]' \
+            existing-releases.json > releases.json
+
+          echo "Updated releases.json with $VERSION (total: $(jq '.releases | length' releases.json) releases)"
+
+          # Upload with retry on race condition
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if ! aws s3 cp releases.json "$S3_PATH/releases.json" --acl public-read; then
+              echo "[ERROR] Failed to upload releases.json"
+              exit 1
+            fi
+
+            # Verify upload succeeded by checking the file exists
+            if aws s3api head-object --bucket aircast-artifacts --key "$S3_KEY" > /dev/null 2>&1; then
+              echo "[OK] releases.json uploaded successfully"
+              break
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "[WARN] Upload verification failed, retry $RETRY_COUNT/$MAX_RETRIES"
+            sleep 2
+          done
+
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "[ERROR] Failed to verify releases.json upload after $MAX_RETRIES retries"
+            exit 1
+          fi
+
+          echo "[OK] releases.json updated: $S3_PATH/releases.json"
+          echo "[OK] Mirror complete!"
+          echo "Mirror URL: https://$DOWNLOADS_DOMAIN/$URL_PATH/$VERSION/"
+
+          cd ..
+          rm -rf temp-assets
+
+      - name: Invalidate CloudFront cache
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+          echo "Invalidating CloudFront cache..."
+
+          # Determine CloudFront domain based on distribution
+          case "$DISTRIBUTION" in
+            "development")
+              CF_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              CF_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              CF_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
+          URL_PATH="images"
+
+          # Find CloudFront distribution
+          CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items, '$CF_DOMAIN')].Id" \
+            --output text)
+
+          if [ -z "$CF_DISTRIBUTION_ID" ]; then
+            echo "[WARN] Could not find CloudFront distribution for $CF_DOMAIN"
+          else
+            echo "Found CloudFront distribution: $CF_DISTRIBUTION_ID"
+
+            # Create invalidation for releases.json and version-specific files
+            INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id $CF_DISTRIBUTION_ID \
+              --paths "/$URL_PATH/releases.json" "/$URL_PATH/$VERSION/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+
+            echo "Created invalidation: $INVALIDATION_ID"
+
+            # Wait for invalidation to complete (with timeout)
+            echo "Waiting for CloudFront invalidation to complete..."
+            timeout 300 aws cloudfront wait invalidation-completed \
+              --distribution-id $CF_DISTRIBUTION_ID \
+              --id $INVALIDATION_ID || echo "[WARN] Invalidation is taking longer than expected"
+
+            echo "[OK] CloudFront cache invalidated!"
+          fi
+
+  notify:
+    needs: [prepare, build, release, mirror-to-s3]
+    if: always()
+    runs-on: [self-hosted, Linux]
+
+    steps:
+      - name: Generate build summary
+        run: |
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+
+          echo "## Raspberry Pi Image Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name == 'push' && 'Branch Push' || github.event_name == 'repository_dispatch' && 'Webhook from aircast-agent' || 'Manual Dispatch' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Distribution:** $DISTRIBUTION" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Build:** ${{ needs.build.result == 'success' && 'Success' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release:** ${{ needs.release.result == 'success' && 'Success' || needs.release.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Determine downloads domain based on distribution
+          case "$DISTRIBUTION" in
+            "development")
+              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              ;;
+            "staging")
+              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              ;;
+            *)
+              DOWNLOADS_DOMAIN="downloads.aircast.one"
+              ;;
+          esac
+          URL_PATH="images"
+
+          if [ "${{ needs.release.result }}" == "success" ]; then
+            echo "### Release Published" >> $GITHUB_STEP_SUMMARY
+            echo "- **GitHub Release:** https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ needs.mirror-to-s3.result }}" == "success" ]; then
+              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$URL_PATH/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+              echo "- **Releases:** https://$DOWNLOADS_DOMAIN/$URL_PATH/releases.json" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "### Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check the build logs above for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify Telegram
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
+          BUILD="${{ needs.build.result }}"
+          RELEASE="${{ needs.release.result }}"
+          MIRROR="${{ needs.mirror-to-s3.result }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [ "$BUILD" == "success" ] && [ "$RELEASE" == "success" ]; then
+            MESSAGE="✅ *Pi Image Published*
+
+          *Version:* \`${VERSION}\`
+          *Channel:* ${DISTRIBUTION}
+          *S3 Mirror:* ${MIRROR}"
+          else
+            MESSAGE="❌ *Pi Image Build Failed*
+
+          *Version:* \`${VERSION}\`
+          *Build:* ${BUILD}
+          *Release:* ${RELEASE}
+
+          [View Logs](${RUN_URL})"
+          fi
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="Markdown" \
+            -d text="$MESSAGE"
