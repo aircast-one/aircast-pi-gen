@@ -1,0 +1,22 @@
+name: Validate
+
+on:
+  pull_request:
+    paths:
+      - 'stage3/02-install-aircast/files/fluent-bit*'
+      - 'Makefile'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'stage3/02-install-aircast/files/fluent-bit*'
+      - 'Makefile'
+      - '.github/workflows/validate.yml'
+
+jobs:
+  fluent-bit-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Fluent Bit config
+        run: make test-fluent-bit
