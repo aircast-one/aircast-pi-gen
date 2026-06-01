@@ -34,10 +34,12 @@ install -m 644 files/fluent-bit-parsers.conf "${ROOTFS_DIR}/etc/fluent-bit/parse
 mkdir -p "${ROOTFS_DIR}/etc/systemd/system/fluent-bit.service.d"
 install -m 644 files/fluent-bit-env.conf "${ROOTFS_DIR}/etc/systemd/system/fluent-bit.service.d/env.conf"
 
-# Aircast runtime config directory and Fluent Bit buffer directory.
-install -d -m 0750 -o root -g root "${ROOTFS_DIR}/etc/aircast"
-install -d -m 0750 -o root -g root "${ROOTFS_DIR}/var/lib/fluent-bit"
-install -d -m 0750 -o root -g root "${ROOTFS_DIR}/var/lib/fluent-bit/buffer"
+# Aircast runtime config directory. /var/lib/fluent-bit is owned by the
+# fluent-bit deb (today: root:root, but we don't pin the owner so an
+# upstream switch to a fluent-bit user doesn't break the write path).
+# Only the buffer subdir is ours.
+install -d -m 0750 "${ROOTFS_DIR}/etc/aircast"
+install -d -m 0750 "${ROOTFS_DIR}/var/lib/fluent-bit/buffer"
 
 on_chroot << EOF
 systemctl enable fluent-bit.service
