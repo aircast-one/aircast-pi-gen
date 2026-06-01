@@ -3,20 +3,22 @@ name: Validate
 on:
   pull_request:
     paths:
-      - 'stage3/02-install-aircast/files/fluent-bit*'
+      - 'stage**'
       - 'Makefile'
       - '.github/workflows/validate.yml'
   push:
     branches: [main]
     paths:
-      - 'stage3/02-install-aircast/files/fluent-bit*'
+      - 'stage**'
       - 'Makefile'
       - '.github/workflows/validate.yml'
 
 jobs:
-  fluent-bit-config:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Lint stage script naming
+        run: make lint-stage-scripts
       - name: Validate Fluent Bit config
         run: make test-fluent-bit
