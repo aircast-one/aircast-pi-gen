@@ -49,23 +49,19 @@ dns=systemd-resolved
 
 [connection-ethernet]
 ipv4.route-metric=100
-ipv4.dns=8.8.8.8,192.168.1.1
 
 [connection-wifi]
 ipv4.route-metric=600
-ipv4.dns=8.8.8.8,192.168.1.1
 
 [connection-cellular]
 ipv4.route-metric=800
-ipv4.dns=8.8.8.8,8.8.4.4
 EOF
 
 # Configure systemd-resolved with reliable DNS servers
 mkdir -p "${ROOTFS_DIR}/etc/systemd/resolved.conf.d"
 cat > "${ROOTFS_DIR}/etc/systemd/resolved.conf.d/dns.conf" << 'EOF'
 [Resolve]
-DNS=8.8.8.8 8.8.4.4
-FallbackDNS=1.1.1.1 1.0.0.1
+FallbackDNS=1.1.1.1 9.9.9.9 8.8.8.8 1.0.0.1 149.112.112.112 8.8.4.4
 DNSSEC=allow-downgrade
 Cache=yes
 EOF

@@ -1,3 +1,4 @@
 #!/bin/bash -e
 
-install -m 644 files/resolv.conf "${ROOTFS_DIR}/etc/"
+rm -f "${ROOTFS_DIR}/etc/resolv.conf"
+ln -sf ../run/systemd/resolve/stub-resolv.conf "${ROOTFS_DIR}/etc/resolv.conf"
