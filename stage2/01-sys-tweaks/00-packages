@@ -7,7 +7,7 @@ fake-hwclock usbutils
 dosfstools
 rpi-swap rpi-loop-utils
 raspberrypi-sys-mods
-usb-modeswitch
+usb-modeswitch modemmanager-
 libpam-chksshpwd
 rsync
 htop
