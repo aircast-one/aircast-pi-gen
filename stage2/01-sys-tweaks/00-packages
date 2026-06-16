@@ -5,7 +5,7 @@ avahi-daemon
 ca-certificates curl
 fake-hwclock usbutils
 dosfstools
-dphys-swapfile
+rpi-swap rpi-loop-utils
 raspberrypi-sys-mods
 usb-modeswitch
 libpam-chksshpwd

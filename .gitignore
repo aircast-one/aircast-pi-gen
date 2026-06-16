@@ -10,3 +10,4 @@ SKIP_IMAGES
 
 .idea
 .claude/
+.vscode/
