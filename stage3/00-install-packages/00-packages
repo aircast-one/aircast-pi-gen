@@ -3,7 +3,7 @@ curl
 zsh
 alsa-utils
 rfkill
-policykit-1
+polkitd
 gvfs
 libcamera-tools
 nginx
