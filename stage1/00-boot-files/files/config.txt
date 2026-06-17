@@ -54,6 +54,9 @@ dtoverlay=dwc2,dr_mode=host
 [cm5]
 dtoverlay=dwc2,dr_mode=host
 
+[pi5]
+dtoverlay=nospi10
+
 [all]
 # Enable hardware watchdog for auto-reboot on system hang
 dtparam=watchdog=on
