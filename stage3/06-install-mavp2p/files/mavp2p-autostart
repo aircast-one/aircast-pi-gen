@@ -1,0 +1,36 @@
+#!/bin/bash
+set -eo pipefail
+
+BAUD=115200
+ENDPOINTS="udps:0.0.0.0:14550"
+[ -r /etc/default/mavp2p ] && . /etc/default/mavp2p
+BAUD="${MAVP2P_BAUD:-$BAUD}"
+ENDPOINTS="${MAVP2P_ENDPOINTS:-$ENDPOINTS}"
+
+speaks_mavlink() {
+  LC_ALL=C timeout 3 head -c 1024 "$1" 2>/dev/null | grep -qaP '\xfd|\xfe'
+}
+
+find_fc() {
+  local dev
+  for dev in /dev/serial/by-id/*ArduPilot*-if00 \
+             /dev/serial/by-id/*PX4*-if00 \
+             /dev/serial/by-id/*CubePilot*-if00 \
+             /dev/serial/by-id/*ProfiCNC*-if00 \
+             /dev/serial/by-id/*Hex_*-if00 \
+             /dev/serial/by-id/*Holybro*-if00 \
+             /dev/serial/by-id/*CUAV*-if00 \
+             /dev/serial/by-id/*3D_Robotics*-if00; do
+    [ -e "$dev" ] && { echo "$dev"; return 0; }
+  done
+  for dev in /dev/ttyACM*; do
+    [ -e "$dev" ] || continue
+    speaks_mavlink "$dev" && { echo "$dev"; return 0; }
+  done
+  return 1
+}
+
+DEV="$(find_fc)" || { echo "mavp2p-autostart: no MAVLink flight controller found" >&2; exit 1; }
+read -ra ENDPOINT_ARR <<< "$ENDPOINTS"
+echo "mavp2p-autostart: using $DEV -> ${ENDPOINT_ARR[*]}"
+exec /usr/local/bin/mavp2p "serial:${DEV}:${BAUD}" "${ENDPOINT_ARR[@]}"

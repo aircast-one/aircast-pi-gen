@@ -1,0 +1,14 @@
+[connection]
+id=cellular
+uuid=ce6404bf-6ca4-4757-9be4-c6814330ce91
+type=gsm
+autoconnect=true
+
+[gsm]
+auto-config=true
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto

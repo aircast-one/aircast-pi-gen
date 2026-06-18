@@ -1,9 +1,14 @@
 deploy/*
 work/*
+.build-cache/
 config
 postrun.sh
 SKIP
 SKIP_IMAGES
 .pc
 *-pc
+
+.idea/
+.claude/
 .vscode/
+.DS_Store

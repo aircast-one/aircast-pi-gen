@@ -1,0 +1,11 @@
+# Stop ModemManager from AT-probing flight controllers (it breaks MAVLink).
+# Same autopilot vendor IDs as the USB-stability rules.
+
+# ArduPilot (Cube Orange, Pixhawk, etc.)
+ATTRS{idVendor}=="1209", ENV{ID_MM_DEVICE_IGNORE}="1"
+# PX4/Pixhawk
+ATTRS{idVendor}=="26ac", ENV{ID_MM_DEVICE_IGNORE}="1"
+# STM32 CDC ACM
+ATTRS{idVendor}=="0483", ENV{ID_MM_DEVICE_IGNORE}="1"
+# Holybro
+ATTRS{idVendor}=="3162", ENV{ID_MM_DEVICE_IGNORE}="1"

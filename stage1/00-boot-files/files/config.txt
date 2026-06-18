@@ -10,6 +10,9 @@
 # Enable audio (loads snd_bcm2835)
 dtparam=audio=on
 
+# Enable WiFi hardware
+dtparam=wifi=on
+
 # Additional overlays and parameters are documented
 # /boot/firmware/overlays/README
 
@@ -44,6 +47,9 @@ arm_boost=1
 # This line should be removed if the legacy DWC2 controller is required
 # (e.g. for USB device mode) or if USB support is not required.
 otg_mode=1
+
+[pi02]
+dtoverlay=dwc2,dr_mode=host
 
 [cm5]
 dtoverlay=dwc2,dr_mode=host

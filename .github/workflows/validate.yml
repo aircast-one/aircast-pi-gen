@@ -1,0 +1,22 @@
+name: Validate
+
+on:
+  pull_request:
+    paths:
+      - 'stage**'
+      - 'Makefile'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main, arm64]
+    paths:
+      - 'stage**'
+      - 'Makefile'
+      - '.github/workflows/validate.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint stage script naming
+        run: make lint-stage-scripts

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AirCast Pi — Get Started</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: #141a2e;
+        --panel-2: #1b2340;
+        --text: #e7ecf5;
+        --muted: #97a3bd;
+        --brand: #5b8cff;
+        --brand-2: #8a6cff;
+        --ok: #34d399;
+        --code-bg: #0a0e1c;
+        --border: #25304f;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: radial-gradient(1200px 600px at 70% -10%, #1a2348 0%, var(--bg) 55%);
+        color: var(--text);
+        line-height: 1.55;
+        min-height: 100vh;
+      }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 48px 20px 64px; }
+      header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+      .logo {
+        width: 42px; height: 42px; border-radius: 12px;
+        background: linear-gradient(135deg, var(--brand), var(--brand-2));
+        display: grid; place-items: center; font-weight: 800; font-size: 20px; color: white;
+        box-shadow: 0 8px 30px rgba(91,140,255,.35);
+      }
+      h1 { font-size: 28px; margin: 0; letter-spacing: -.02em; }
+      .sub { color: var(--muted); margin: 2px 0 0; font-size: 15px; }
+      .status {
+        display: inline-flex; align-items: center; gap: 8px; margin: 22px 0 6px;
+        background: rgba(52,211,153,.12); color: var(--ok);
+        border: 1px solid rgba(52,211,153,.3); border-radius: 999px;
+        padding: 6px 14px; font-size: 14px; font-weight: 600;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(52,211,153,.18); }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 26px; }
+      @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+      .card {
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--border); border-radius: 16px; padding: 20px 20px 18px;
+      }
+      .card h3 { margin: 0 0 8px; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+      .num {
+        width: 24px; height: 24px; border-radius: 7px; font-size: 13px; font-weight: 700;
+        background: rgba(91,140,255,.16); color: var(--brand); display: grid; place-items: center;
+      }
+      .card p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+      pre {
+        margin: 0; background: var(--code-bg); border: 1px solid var(--border);
+        border-radius: 10px; padding: 11px 13px; overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px; color: #cdd7f0;
+      }
+      .warn {
+        margin-top: 22px; background: rgba(250,204,21,.08); border: 1px solid rgba(250,204,21,.3);
+        border-radius: 12px; padding: 14px 16px; color: #f5e7b0; font-size: 14px;
+      }
+      footer { margin-top: 34px; color: var(--muted); font-size: 13px; text-align: center; }
+      a { color: var(--brand); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 6px; font-size: .92em; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="logo">A</div>
+        <div>
+          <h1>Your AirCast Pi is ready</h1>
+          <p class="sub">Reachable on your network as <code>aircast.local</code></p>
+        </div>
+      </header>
+
+      <div class="status"><span class="dot"></span> Online &mdash; finish the steps below to go live</div>
+
+      <div class="grid">
+        <div class="card">
+          <h3><span class="num">1</span> Secure the Pi</h3>
+          <p>Default login is <code>pi</code> / <code>raspberry</code>. Change it before exposing SSH.</p>
+          <pre>ssh pi@aircast.local
+passwd</pre>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">2</span> Join your Tailscale network</h3>
+          <p>Gives a secure path to this Pi from anywhere &mdash; no port forwarding.</p>
+          <pre>sudo tailscale up
+sudo tailscale set --operator=$USER</pre>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">3</span> Connect a camera</h3>
+          <p>Wire an RTSP/IP camera to the wired port, then view it from any player.</p>
+          <pre>vlc rtsp://192.168.8.4:554/stream1</pre>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">4</span> Ground station telemetry</h3>
+          <p>Plug in your ArduPilot/PX4 flight controller &mdash; telemetry auto-starts. Point a GCS here:</p>
+          <pre>udp server :14550  (mavp2p)</pre>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">5</span> Add cellular</h3>
+          <p>Plug in a USB 4G/LTE modem. It auto-detects the carrier APN and connects.</p>
+          <pre>mmcli -L      # list detected modems</pre>
+        </div>
+
+        <div class="card">
+          <h3><span class="num">6</span> Wi-Fi (optional)</h3>
+          <p>The radio is unblocked and ready. Join a network with:</p>
+          <pre>nmcli device wifi connect "SSID" password "PASS"</pre>
+        </div>
+      </div>
+
+      <div class="warn">
+        <strong>Heads up:</strong> MAVLink on port <code>14550</code> is unauthenticated. Keep it on your
+        private LAN/Tailscale &mdash; never forward it to the public internet.
+      </div>
+
+      <footer>
+        Full guide: <a href="https://aircast.one/blog/build-your-own-4g-drone-for-free">aircast.one</a>
+        &nbsp;&middot;&nbsp; This page is served locally by your Pi.
+      </footer>
+    </div>
+  </body>
+</html>
