@@ -5,7 +5,7 @@ type=gsm
 autoconnect=true
 
 [gsm]
-auto-config=true
+auto-config=false
 
 [ipv4]
 method=auto
