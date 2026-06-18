@@ -9,6 +9,18 @@ auto-config=false
 
 [ipv4]
 method=auto
+# Pin public resolvers in addition to whatever the carrier provides, so DNS
+# always works on cellular (carrier DNS is sometimes empty or unreliable).
+dns=1.1.1.1;8.8.8.8;
+ignore-auto-dns=false
+# Cellular is the PREFERRED uplink. Lower number = higher priority, so cellular
+# DNS leads and LAN DNS (default 100) is only a fallback.
+dns-priority=10
+# Lower metric than wired (~100) makes cellular the default route whenever it is
+# up; if the modem drops, the wired routes take over automatically.
+route-metric=50
 
 [ipv6]
 method=auto
+dns-priority=10
+route-metric=50
