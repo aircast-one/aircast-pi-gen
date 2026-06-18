@@ -1,0 +1,6 @@
+# Passwordless sudo for the pi user. These are headless devices managed over
+# Tailscale, where SSH access already implies trust; `just deploy` and remote
+# maintenance install the aircastd binary and restart services over SSH, which
+# needs sudo without an interactive password prompt. Mirrors Raspberry Pi OS's
+# stock 010_pi-nopasswd drop-in.
+pi ALL=(ALL) NOPASSWD: ALL

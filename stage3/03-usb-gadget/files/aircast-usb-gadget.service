@@ -1,0 +1,17 @@
+[Unit]
+Description=Aircast USB Ethernet gadget (RNDIS + CDC ECM)
+Documentation=https://www.kernel.org/doc/Documentation/usb/gadget_configfs.txt
+# configfs must be mounted before we can build the gadget.
+Requires=sys-kernel-config.mount
+After=sys-kernel-config.mount
+# Bring the gadget up before NetworkManager so usb0 exists when it scans.
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/aircast-usb-gadget up
+ExecStop=/usr/local/sbin/aircast-usb-gadget down
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,112 @@
+#!/bin/bash
+# Aircast USB Ethernet gadget (libcomposite).
+#
+# Builds a composite gadget that exposes the Pi to a directly-cabled computer as:
+#   - RNDIS    -> Windows (auto-binds via the Microsoft OS descriptors below)
+#   - CDC NCM  -> macOS / Linux / Windows 11 (the modern successor to CDC ECM)
+# Each host OS selects the configuration its driver understands; either way the
+# Pi-side interface is named usb0, which NetworkManager brings up in shared mode.
+#
+# This replaces the legacy single g_ether module: g_ether's default CDC-ECM is
+# invisible to Windows, which is why the gadget never enumerated there.
+#
+# dr_mode=otg means the port is host when an OTG adapter + device (the cellular
+# modem) is attached, and peripheral when cabled to a computer. In host role no
+# usable UDC is exposed, so this script no-ops instead of fighting the modem.
+set -e
+
+GADGET=/sys/kernel/config/usb_gadget/aircast
+
+# Locally-administered MACs, fixed so the interface name stays stable.
+RNDIS_DEV_MAC="1a:55:89:a2:69:41"
+RNDIS_HOST_MAC="1a:55:89:a2:69:42"
+NCM_DEV_MAC="1a:55:89:a2:69:43"
+NCM_HOST_MAC="1a:55:89:a2:69:44"
+
+up() {
+	modprobe libcomposite
+
+	# In host role (modem attached via OTG) there is no peripheral UDC to bind.
+	local udc
+	udc="$(ls /sys/class/udc 2>/dev/null | head -n1 || true)"
+	if [ -z "$udc" ]; then
+		echo "aircast-usb-gadget: no UDC available (host role?), skipping"
+		return 0
+	fi
+
+	# Idempotent: already up.
+	[ -e "$GADGET/UDC" ] && [ -n "$(cat "$GADGET/UDC" 2>/dev/null)" ] && return 0
+
+	mkdir -p "$GADGET"
+	cd "$GADGET"
+
+	echo 0x1d6b > idVendor          # Linux Foundation
+	echo 0x0104 > idProduct         # Multifunction Composite Gadget
+	echo 0x0100 > bcdDevice
+	echo 0x0200 > bcdUSB
+
+	# IAD composite class so Windows applies the per-interface class, not a
+	# single device-wide one.
+	echo 0xEF > bDeviceClass
+	echo 0x02 > bDeviceSubClass
+	echo 0x01 > bDeviceProtocol
+
+	mkdir -p strings/0x409
+	echo "aircast0001"          > strings/0x409/serialnumber
+	echo "Aircast"              > strings/0x409/manufacturer
+	echo "Aircast USB Ethernet" > strings/0x409/product
+
+	# Microsoft OS descriptors: make Windows auto-load the RNDIS driver.
+	echo 1       > os_desc/use
+	echo 0xcd    > os_desc/b_vendor_code
+	echo MSFT100 > os_desc/qw_sign
+
+	# --- RNDIS function (Windows) ---
+	mkdir -p functions/rndis.usb0
+	echo "$RNDIS_DEV_MAC"  > functions/rndis.usb0/dev_addr
+	echo "$RNDIS_HOST_MAC" > functions/rndis.usb0/host_addr
+	echo "RNDIS"   > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+	echo "5162001" > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+
+	# --- CDC NCM function (macOS / Linux / Win11) ---
+	mkdir -p functions/ncm.usb0
+	echo "$NCM_DEV_MAC"  > functions/ncm.usb0/dev_addr
+	echo "$NCM_HOST_MAC" > functions/ncm.usb0/host_addr
+
+	# Config 1: RNDIS. Windows reads the OS descriptors and selects this one.
+	mkdir -p configs/c.1/strings/0x409
+	echo "RNDIS" > configs/c.1/strings/0x409/configuration
+	echo 250     > configs/c.1/MaxPower
+	ln -s functions/rndis.usb0 configs/c.1/
+	# Point the OS descriptor at the RNDIS config.
+	ln -s configs/c.1 os_desc
+
+	# Config 2: CDC NCM for hosts that ignore the Microsoft descriptors.
+	mkdir -p configs/c.2/strings/0x409
+	echo "CDC NCM" > configs/c.2/strings/0x409/configuration
+	echo 250       > configs/c.2/MaxPower
+	ln -s functions/ncm.usb0 configs/c.2/
+
+	# Bind to the controller — this enumerates the gadget on the host.
+	echo "$udc" > UDC
+	echo "aircast-usb-gadget: bound to $udc"
+}
+
+down() {
+	[ -d "$GADGET" ] || return 0
+	echo "" > "$GADGET/UDC" 2>/dev/null || true
+	# Tear down in reverse: unlink functions from configs, then remove dirs.
+	rm -f "$GADGET"/configs/c.1/rndis.usb0 "$GADGET"/configs/c.2/ncm.usb0
+	rm -f "$GADGET"/os_desc/c.1
+	rmdir "$GADGET"/configs/c.1/strings/0x409 "$GADGET"/configs/c.2/strings/0x409 2>/dev/null || true
+	rmdir "$GADGET"/configs/c.1 "$GADGET"/configs/c.2 2>/dev/null || true
+	rmdir "$GADGET"/functions/rndis.usb0 "$GADGET"/functions/ncm.usb0 2>/dev/null || true
+	rmdir "$GADGET"/strings/0x409 2>/dev/null || true
+	rmdir "$GADGET" 2>/dev/null || true
+}
+
+case "${1:-up}" in
+	up)   up ;;
+	down) down ;;
+	*)    echo "usage: $0 {up|down}" >&2; exit 1 ;;
+esac
