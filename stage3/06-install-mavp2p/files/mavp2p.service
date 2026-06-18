@@ -1,8 +1,17 @@
 [Unit]
-Description=mavp2p MAVLink proxy (auto-detected serial -> UDP)
+Description=mavp2p MAVLink proxy (serial -> UDP, resolved by aircastd)
+# aircastd detects the flight-controller serial port and writes the resolved
+# invocation to /run/aircastd/mavp2p.args, then restarts this unit.
+After=aircastd.service
+Wants=aircastd.service
 
 [Service]
-ExecStart=/usr/local/bin/mavp2p-autostart
+# The args file is optional (-): until aircastd resolves a flight controller it
+# is absent and mavp2p exits, so systemd retries on the interval below.
+EnvironmentFile=-/run/aircastd/mavp2p.args
+# Unbraced $MAVP2P_ARGS is intentional: systemd splits it on whitespace into the
+# individual mavp2p arguments (serial:<dev>:<baud> followed by each endpoint).
+ExecStart=/usr/local/bin/mavp2p $MAVP2P_ARGS
 Restart=always
 RestartSec=15
 

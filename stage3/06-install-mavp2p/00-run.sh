@@ -12,7 +12,8 @@ install -m 755 /tmp/mavp2p /usr/local/bin/mavp2p
 rm -f /tmp/mavp2p.tar.gz /tmp/mavp2p
 EOF
 
-install -m 755 files/mavp2p-autostart "${ROOTFS_DIR}/usr/local/bin/mavp2p-autostart"
+# Serial-port detection and argument resolution now live in aircastd, which
+# writes /run/aircastd/mavp2p.args for the unit; no autostart wrapper is shipped.
 install -m 644 files/mavp2p.default "${ROOTFS_DIR}/etc/default/mavp2p"
 install -m 644 files/mavp2p.service "${ROOTFS_DIR}/etc/systemd/system/mavp2p.service"
 

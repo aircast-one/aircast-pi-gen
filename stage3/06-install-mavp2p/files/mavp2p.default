@@ -1,4 +1,4 @@
-# mavp2p configuration. Override per device, then: systemctl restart mavp2p
-# The flight controller serial port is auto-detected; these only tune baud/endpoints.
+# mavp2p configuration, managed by aircastd (edit via the control plane, not by hand).
+# aircastd auto-detects the flight controller serial port; these only tune baud/endpoints.
 MAVP2P_BAUD=115200
 MAVP2P_ENDPOINTS="udps:0.0.0.0:14550"

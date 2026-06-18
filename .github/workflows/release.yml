@@ -149,6 +149,7 @@ jobs:
           TARGET_HOSTNAME=aircast
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
+          AIRCASTD_VERSION='${{ github.event.client_payload.aircastd_version }}'
           EOF
 
           echo "Configuration created"

@@ -10,6 +10,10 @@ echo "${MEDIAMTX_SHA256}  /tmp/mediamtx.tar.gz" | sha256sum -c -
 tar -xzf /tmp/mediamtx.tar.gz -C /tmp mediamtx mediamtx.yml
 install -m 755 /tmp/mediamtx /usr/local/bin/mediamtx
 install -D -m 644 /tmp/mediamtx.yml /usr/local/etc/mediamtx.yml
+# Enable the Control API so aircastd applies config changes live (per-path)
+# instead of falling back to a full reload. aircastd also enforces this at
+# startup; setting it here means fresh images are correct from first boot.
+sed -i 's/^api: no$/api: yes/' /usr/local/etc/mediamtx.yml
 rm -f /tmp/mediamtx.tar.gz /tmp/mediamtx /tmp/mediamtx.yml
 EOF
 
