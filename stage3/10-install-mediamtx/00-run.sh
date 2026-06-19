@@ -5,7 +5,7 @@ MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMT
 MEDIAMTX_SHA256="97a277cf24153e168008c18da53fe84e8d364456e2d7b457dc0457666c32867b"
 
 on_chroot << EOF
-curl -fsSL -o /tmp/mediamtx.tar.gz "${MEDIAMTX_URL}"
+curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 -o /tmp/mediamtx.tar.gz "${MEDIAMTX_URL}"
 echo "${MEDIAMTX_SHA256}  /tmp/mediamtx.tar.gz" | sha256sum -c -
 tar -xzf /tmp/mediamtx.tar.gz -C /tmp mediamtx mediamtx.yml
 install -m 755 /tmp/mediamtx /usr/local/bin/mediamtx

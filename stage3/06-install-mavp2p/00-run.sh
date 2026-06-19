@@ -5,7 +5,7 @@ MAVP2P_URL="https://github.com/bluenviron/mavp2p/releases/download/${MAVP2P_VERS
 MAVP2P_SHA256="174bbd85e6353e6f8fd006adc64629ea40e2f8897d308cd75043ec9a72ba8c6f"
 
 on_chroot << EOF
-curl -fsSL -o /tmp/mavp2p.tar.gz "${MAVP2P_URL}"
+curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 -o /tmp/mavp2p.tar.gz "${MAVP2P_URL}"
 echo "${MAVP2P_SHA256}  /tmp/mavp2p.tar.gz" | sha256sum -c -
 tar -xzf /tmp/mavp2p.tar.gz -C /tmp mavp2p
 install -m 755 /tmp/mavp2p /usr/local/bin/mavp2p
