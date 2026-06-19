@@ -1,5 +1,5 @@
 [Unit]
-Description=Aircast USB Ethernet gadget (RNDIS + CDC ECM)
+Description=Aircast USB Ethernet gadget (RNDIS + CDC NCM)
 Documentation=https://www.kernel.org/doc/Documentation/usb/gadget_configfs.txt
 # configfs must be mounted before we can build the gadget.
 Requires=sys-kernel-config.mount

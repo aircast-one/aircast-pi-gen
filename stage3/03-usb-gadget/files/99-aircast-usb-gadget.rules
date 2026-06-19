@@ -2,6 +2,7 @@
 # changes role. dr_mode=otg means the port is host while the modem/flight
 # controller are attached and only becomes a device when cabled to a computer;
 # that transition happens after boot, long after the oneshot service ran. This
-# rebinds the gadget on the host->device switch. try-restart is a no-op until
-# the boot-time service is active, and --no-block keeps the udev worker free.
-ACTION=="add|change", SUBSYSTEM=="udc", RUN+="/bin/systemctl --no-block try-restart aircast-usb-gadget.service"
+# rebinds the gadget on the host->device switch. restart (not try-restart) so a
+# unit left failed by an earlier busy-UDC bind still recovers here; the service's
+# up() scrubs any stale state first. --no-block keeps the udev worker free.
+ACTION=="add|change", SUBSYSTEM=="udc", RUN+="/bin/systemctl --no-block restart aircast-usb-gadget.service"

@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 # USB Ethernet gadget: lets a computer cabled to the Pi's USB port reach it at
-# 10.55.0.1 (RNDIS for Windows, CDC ECM for macOS/Linux). Requires the dwc2
+# 10.55.0.1 (RNDIS for Windows, CDC NCM for macOS/Linux). Requires the dwc2
 # controller in OTG mode (see stage1 config.txt) so it stays a USB host for the
 # cellular modem when an OTG adapter is used instead.
 

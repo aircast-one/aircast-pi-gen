@@ -17,11 +17,17 @@ set -e
 
 GADGET=/sys/kernel/config/usb_gadget/aircast
 
-# Locally-administered MACs, fixed so the interface name stays stable.
-RNDIS_DEV_MAC="1a:55:89:a2:69:41"
-RNDIS_HOST_MAC="1a:55:89:a2:69:42"
-NCM_DEV_MAC="1a:55:89:a2:69:43"
-NCM_HOST_MAC="1a:55:89:a2:69:44"
+# Per-device identity derived from the Pi's CPU serial, so two units on the same
+# host/hub don't collide on USB serial or MAC. Locally-administered, unicast MACs
+# (first octet 0x02); the last octet distinguishes function + side.
+cpu_serial="$(sed -n 's/^Serial\s*:\s*0*//p' /proc/cpuinfo)"
+[ -n "$cpu_serial" ] || cpu_serial="000000000001"
+sfx="$(printf '%s' "$cpu_serial" | tail -c 6)"   # last 3 MAC octets
+mac() { printf '02:00:%s:%s:%s:%s' "${sfx:0:2}" "${sfx:2:2}" "${sfx:4:2}" "$1"; }
+RNDIS_DEV_MAC="$(mac 01)"
+RNDIS_HOST_MAC="$(mac 02)"
+NCM_DEV_MAC="$(mac 03)"
+NCM_HOST_MAC="$(mac 04)"
 
 up() {
 	modprobe libcomposite
@@ -34,8 +40,15 @@ up() {
 		return 0
 	fi
 
-	# Idempotent: already up.
-	[ -e "$GADGET/UDC" ] && [ -n "$(cat "$GADGET/UDC" 2>/dev/null)" ] && return 0
+	# Already bound — nothing to do.
+	if [ -e "$GADGET/UDC" ] && [ -n "$(cat "$GADGET/UDC" 2>/dev/null)" ]; then
+		return 0
+	fi
+
+	# Scrub any half-built state from a previous failed bind so the build below
+	# is always starting from a clean tree (configfs symlinks can't be recreated
+	# over an existing one).
+	down
 
 	mkdir -p "$GADGET"
 	cd "$GADGET"
@@ -52,7 +65,7 @@ up() {
 	echo 0x01 > bDeviceProtocol
 
 	mkdir -p strings/0x409
-	echo "aircast0001"          > strings/0x409/serialnumber
+	echo "$cpu_serial"          > strings/0x409/serialnumber
 	echo "Aircast"              > strings/0x409/manufacturer
 	echo "Aircast USB Ethernet" > strings/0x409/product
 
@@ -87,8 +100,14 @@ up() {
 	echo 250       > configs/c.2/MaxPower
 	ln -s functions/ncm.usb0 configs/c.2/
 
-	# Bind to the controller — this enumerates the gadget on the host.
-	echo "$udc" > UDC
+	# Bind to the controller — this enumerates the gadget on the host. The UDC
+	# can be listed but busy mid role-switch, so a failed bind must not leave a
+	# half-built gadget behind.
+	if ! echo "$udc" > UDC; then
+		echo "aircast-usb-gadget: bind to $udc failed, tearing down" >&2
+		down
+		exit 1
+	fi
 	echo "aircast-usb-gadget: bound to $udc"
 }
 
