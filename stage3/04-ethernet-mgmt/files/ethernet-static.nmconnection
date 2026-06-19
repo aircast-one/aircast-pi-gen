@@ -1,0 +1,27 @@
+[connection]
+id=ethernet-static
+uuid=b1d8f4a7-2c93-4e6f-8a51-9d0e3c7b6f22
+type=ethernet
+autoconnect=true
+# Lower priority than ethernet-dhcp: only activates when the DHCP profile fails,
+# i.e. no DHCP server on the wire (a direct laptop<->Pi cable). Set your laptop's
+# adapter to 192.168.2.x (e.g. 192.168.2.1/24) and reach the Pi at ssh pi@192.168.2.6.
+autoconnect-priority=10
+
+[match]
+# Same wired interfaces as ethernet-dhcp; never the USB gadget (usb0).
+interface-name=eth* en* !usb*
+
+[ethernet]
+
+[ipv4]
+method=manual
+# Fixed fallback address on the 192.168.2.0/24 subnet (matches the Windows ICS
+# direct-cable setup). Distinct from the USB gadget's 10.55.0.0/24.
+address1=192.168.2.6/24
+# Management link only, never the device's default route.
+never-default=true
+route-metric=100
+
+[ipv6]
+method=disabled

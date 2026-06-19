@@ -1,0 +1,35 @@
+[connection]
+id=ethernet-dhcp
+uuid=7c3e1a92-4f6b-4a2d-9e8c-1b5d2f0a6c34
+type=ethernet
+autoconnect=true
+# Preferred profile: try DHCP first. Higher priority than ethernet-static.
+autoconnect-priority=20
+# Move on to the static-fallback profile quickly instead of retrying DHCP.
+autoconnect-retries=1
+
+[match]
+# Apply to ANY wired interface (built-in eth0, USB-Ethernet dongles eth1/enx…),
+# but never the USB gadget (usb0), which has its own shared-mode profile.
+interface-name=eth* en* !usb*
+
+[ethernet]
+
+[ipv4]
+# DHCP when wired to a router/switch: eth0 gets a lease (and an uplink). When a
+# lease is obtained, this is the ONLY address on eth0 — no static IP is pinned.
+method=auto
+# may-fail=false makes activation FAIL (rather than sit half-up) when no DHCP
+# server answers, so NetworkManager falls through to the static profile. The
+# short timeout keeps the direct-cable case from waiting the default 45s.
+may-fail=false
+dhcp-timeout=20
+# Fallback uplink: higher metric than cellular (50) keeps cellular the default
+# route while up; wired takes over only if the modem drops.
+route-metric=100
+dns-priority=100
+
+[ipv6]
+# Disabled here so IPv6 link-local can't hold the connection "up" and mask a
+# failed IPv4 DHCP, which would block the fallback to the static profile.
+method=disabled
