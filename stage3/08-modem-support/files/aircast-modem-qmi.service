@@ -1,0 +1,15 @@
+[Unit]
+Description=Force SimTech cellular modem into QMI USB composition
+Documentation=man:ModemManager(8)
+# Run after udev has had a chance to create the serial device nodes, and before
+# ModemManager so the AT ports are free and MM sees the QMI composition.
+After=systemd-udevd.service
+Before=ModemManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aircast-modem-qmi.sh
+
+[Install]
+WantedBy=multi-user.target

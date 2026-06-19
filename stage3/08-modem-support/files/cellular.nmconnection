@@ -6,6 +6,10 @@ autoconnect=true
 
 [gsm]
 auto-config=false
+# Georgian carriers (Magti, Geocell/Silknet) all use the "internet" APN. An
+# empty APN makes the carrier reject the PDP context ("Modem hangup" / "No
+# carrier"), so set it explicitly rather than relying on auto-config.
+apn=internet
 
 [ipv4]
 method=auto
