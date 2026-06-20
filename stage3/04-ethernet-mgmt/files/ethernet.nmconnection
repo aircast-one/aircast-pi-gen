@@ -9,9 +9,8 @@ autoconnect-priority=20
 autoconnect-retries=1
 
 [match]
-# Apply to ANY wired interface (built-in eth0, USB-Ethernet dongles eth1/enx…),
-# but never the USB gadget (usb0), which has its own shared-mode profile.
-interface-name=eth* en* !usb*
+# Apply to ANY wired interface (built-in eth0, USB-Ethernet dongles eth1/enx…).
+interface-name=eth* en*
 
 [ethernet]
 

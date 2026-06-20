@@ -9,15 +9,15 @@ autoconnect=true
 autoconnect-priority=10
 
 [match]
-# Same wired interfaces as ethernet-dhcp; never the USB gadget (usb0).
-interface-name=eth* en* !usb*
+# Same wired interfaces as ethernet-dhcp.
+interface-name=eth* en*
 
 [ethernet]
 
 [ipv4]
 method=manual
 # Fixed fallback address on the 192.168.2.0/24 subnet (matches the Windows ICS
-# direct-cable setup). Distinct from the USB gadget's 10.55.0.0/24.
+# direct-cable setup).
 address1=192.168.2.6/24
 # Management link only, never the device's default route.
 never-default=true
