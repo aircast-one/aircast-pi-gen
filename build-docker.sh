@@ -107,8 +107,8 @@ esac
 
 # Check if qemu-aarch64 and /proc/sys/fs/binfmt_misc are present
 if [[ "${binfmt_misc_required}" == "1" ]]; then
-  if ! qemu_arm=$(which qemu-aarch64) ; then
-    echo "qemu-aarch64 not found (please install qemu-user-binfmt)"
+  if ! qemu_arm=$(which qemu-aarch64-static) ; then
+    echo "qemu-aarch64-static not found (please install qemu-user-static)"
     exit 1
   fi
   if [ ! -f /proc/sys/fs/binfmt_misc/register ]; then
@@ -141,7 +141,7 @@ time ${DOCKER} run \
   $DOCKER_CMDLINE_POST \
   pi-gen \
   bash -e -o pipefail -c "
-    dpkg-reconfigure qemu-user-binfmt &&
+    dpkg-reconfigure qemu-user-static &&
     # binfmt_misc is sometimes not mounted with debian trixie image
     (mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc || true) &&
     cd /pi-gen; ./build.sh ${BUILD_OPTS} &&
