@@ -44,17 +44,32 @@ curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
 echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_DISTRIBUTION} main" \
 	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast.list"
 
-on_chroot << 'EOF'
+# Pin to the exact released version so the image is deterministic — a later
+# release to the same channel can't change what a rebuild bakes in. Map the
+# release tag to its Debian package version: drop the leading 'v' and turn '-'
+# into '~' (nfpm's pre-release convention, e.g. v0.0.1-dev.3 -> 0.0.1~dev.3).
+# Falls back to channel-latest when no version is provided (local builds).
+if [ -n "${AIRCASTD_VERSION:-}" ]; then
+	deb_ver="${AIRCASTD_VERSION#v}"
+	deb_ver="${deb_ver/-/~}"
+	aircastd_pkg="aircastd=${deb_ver}"
+	echo "aircastd: pinning to ${aircastd_pkg}"
+else
+	aircastd_pkg="aircastd"
+	echo "aircastd: no version pin; installing channel-latest"
+fi
+
+on_chroot << EOF
 set -e
-# aircastd's postinst runs `systemctl daemon-reload` and `systemctl restart`
+# aircastd's postinst runs \`systemctl daemon-reload\` and \`systemctl restart\`
 # unconditionally, which fail in the build chroot (no running systemd) and would
-# abort `apt-get install`. Divert systemctl to a no-op for the install, then
+# abort \`apt-get install\`. Divert systemctl to a no-op for the install, then
 # enable the unit offline afterwards (enable works without a running systemd).
 dpkg-divert --local --rename --add /usr/bin/systemctl
 ln -sf /bin/true /usr/bin/systemctl
 
 apt-get update
-apt-get install -y aircastd
+apt-get install -y --allow-downgrades ${aircastd_pkg}
 
 rm -f /usr/bin/systemctl
 dpkg-divert --local --rename --remove /usr/bin/systemctl

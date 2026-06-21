@@ -149,7 +149,11 @@ jobs:
           TARGET_HOSTNAME=aircast
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
-          AIRCASTD_VERSION='${{ github.event.client_payload.aircastd_version }}'
+          # Resolved for both trigger paths by the prepare job (workflow_dispatch
+          # inputs OR repository_dispatch payload). Exported so stage3 sees them:
+          # the apt channel to pull aircastd from, and the exact version to pin.
+          export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
+          export AIRCASTD_VERSION='${{ needs.prepare.outputs.version }}'
           EOF
 
           echo "Configuration created"
