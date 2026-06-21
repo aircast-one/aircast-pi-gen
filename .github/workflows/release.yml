@@ -147,10 +147,6 @@ jobs:
           STAGE_LIST="stage0 stage1 stage2 stage3"
           RELEASE=trixie
           TARGET_HOSTNAME=aircast
-          # Wi-Fi regulatory domain. Required for AP/hotspot beaconing: on the
-          # world ("00") regdomain 2.4GHz channels are NO-IR (no beaconing), so
-          # the recovery hotspot can't broadcast. GE = Georgia (this fleet's
-          # deployment region). Also keeps Wi-Fi enabled in stage2.
           WPA_COUNTRY=GE
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
