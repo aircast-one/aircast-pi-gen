@@ -1,8 +1,9 @@
 [Unit]
 Description=Set Wi-Fi hotspot SSID to the device hostname
 # Rewrite the SSID before NetworkManager activates the AP, so it broadcasts the
-# right name the moment it comes up. Hostname is applied by systemd well before.
-After=systemd-hostnamed.service
+# right name the moment it comes up. Must run after the per-device hostname is
+# assigned on first boot.
+After=systemd-hostnamed.service aircast-set-hostname.service
 Before=NetworkManager.service
 ConditionPathExists=/etc/NetworkManager/system-connections/hotspot.nmconnection
 
