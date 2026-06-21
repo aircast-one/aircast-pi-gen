@@ -319,7 +319,7 @@ jobs:
           fi
 
           # Rename to include version
-          NEW_NAME="aircast-rpi-arm64-${VERSION}.${EXT}"
+          NEW_NAME="aircast-lite-arm64-${VERSION}.${EXT}"
           cp "$IMAGE_PATH" "$NEW_NAME"
 
           echo "image_path=$NEW_NAME" >> $GITHUB_OUTPUT
@@ -392,7 +392,7 @@ jobs:
         run: |
           # Self-hosted runner: remove any leftover artifacts from previous runs
           # so globs and downloads only see files from the current build.
-          rm -f aircast-rpi-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
+          rm -f aircast-lite-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -407,7 +407,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
-          name: Aircast Pi Image ${{ needs.prepare.outputs.version }}
+          name: Aircast Lite Image ${{ needs.prepare.outputs.version }}
           body: |
             ## Aircast Raspberry Pi Image
 
@@ -431,8 +431,8 @@ jobs:
           prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
           fail_on_unmatched_files: true
           files: |
-            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz
-            release-assets/aircast-rpi-arm64-${{ needs.prepare.outputs.version }}.img.xz.sha256
+            release-assets/aircast-lite-arm64-${{ needs.prepare.outputs.version }}.img.xz
+            release-assets/aircast-lite-arm64-${{ needs.prepare.outputs.version }}.img.xz.sha256
 
   mirror-to-s3:
     needs: [prepare, build, release]
@@ -452,7 +452,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          ASSET="aircast-rpi-arm64-${VERSION}.img.xz"
+          ASSET="aircast-lite-arm64-${VERSION}.img.xz"
           echo "Waiting for release asset $ASSET to be available..."
           for i in $(seq 1 60); do
             if gh release view "$VERSION" -R "${{ github.repository }}" \
@@ -494,11 +494,11 @@ jobs:
           # attached to this release by earlier failed/partial runs.
           echo "Downloading release assets for $VERSION..."
           gh release download "$VERSION" -R ${{ github.repository }} \
-            --pattern "aircast-rpi-arm64-${VERSION}.img.xz" \
-            --pattern "aircast-rpi-arm64-${VERSION}.img.xz.sha256"
+            --pattern "aircast-lite-arm64-${VERSION}.img.xz" \
+            --pattern "aircast-lite-arm64-${VERSION}.img.xz.sha256"
 
           # Upload to S3 (use distribution-based path)
-          S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/images"
+          S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/lite"
           echo "Uploading to S3 ($S3_PATH)..."
 
           # Determine CloudFront domain based on distribution
@@ -515,11 +515,11 @@ jobs:
               DOWNLOADS_DOMAIN="downloads.aircast.one"
               ;;
           esac
-          URL_PATH="images"
+          URL_PATH="lite"
 
           # Upload all image files and checksums with verification
           UPLOAD_FAILED=false
-          for file in aircast-rpi-arm64-*; do
+          for file in aircast-lite-arm64-*; do
             if [ -f "$file" ]; then
               echo "Uploading: $file"
               LOCAL_SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
@@ -532,7 +532,7 @@ jobs:
               fi
 
               # Verify upload by checking file exists and size matches
-              REMOTE_SIZE=$(aws s3api head-object --bucket aircast-artifacts --key "$DISTRIBUTION/images/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
+              REMOTE_SIZE=$(aws s3api head-object --bucket aircast-artifacts --key "$DISTRIBUTION/lite/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
               if [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
                 echo "[ERROR] Size mismatch for $file: local=$LOCAL_SIZE, remote=$REMOTE_SIZE"
                 UPLOAD_FAILED=true
@@ -552,10 +552,10 @@ jobs:
 
           # Select the image by exact version match — never by filesystem sort/size,
           # which is fragile if stale files are ever present.
-          MAIN_IMAGE="aircast-rpi-arm64-${VERSION}.img.xz"
+          MAIN_IMAGE="aircast-lite-arm64-${VERSION}.img.xz"
           if [ ! -f "$MAIN_IMAGE" ]; then
             echo "[ERROR] Expected image file not found: $MAIN_IMAGE"
-            ls -la aircast-rpi-arm64-* 2>/dev/null || true
+            ls -la aircast-lite-arm64-* 2>/dev/null || true
             exit 1
           fi
 
@@ -589,7 +589,7 @@ jobs:
           echo "Image: $MAIN_IMAGE (extension: $IMAGE_EXTENSION, size: $IMAGE_SIZE)"
 
           # Fetch existing releases.json from S3 directly (bypass CDN cache)
-          S3_KEY="$DISTRIBUTION/images/releases.json"
+          S3_KEY="$DISTRIBUTION/lite/releases.json"
 
           if aws s3 cp "s3://aircast-artifacts/$S3_KEY" existing-releases.json 2>/dev/null; then
             echo "Found existing releases.json"
@@ -678,7 +678,7 @@ jobs:
               CF_DOMAIN="downloads.aircast.one"
               ;;
           esac
-          URL_PATH="images"
+          URL_PATH="lite"
 
           # Find CloudFront distribution
           CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
@@ -744,7 +744,7 @@ jobs:
               DOWNLOADS_DOMAIN="downloads.aircast.one"
               ;;
           esac
-          URL_PATH="images"
+          URL_PATH="lite"
 
           if [ "${{ needs.release.result }}" == "success" ]; then
             echo "### Release Published" >> $GITHUB_STEP_SUMMARY
