@@ -1,10 +1,11 @@
 [Unit]
 Description=Set Wi-Fi hotspot SSID to the device hostname
-# Rewrite the SSID before NetworkManager activates the AP, so it broadcasts the
-# right name the moment it comes up. Must run after the per-device hostname is
-# assigned on first boot.
-After=systemd-hostnamed.service aircast-set-hostname.service
-Before=NetworkManager.service
+# The hostname is set on first boot by cloud-init (the flasher writes it to the
+# boot partition). Run after it is finalized and after NetworkManager is up,
+# then reload so the AP broadcasts the right SSID. Idempotent: on later boots
+# the keyfile already matches and this no-ops.
+After=cloud-init.service NetworkManager.service
+Wants=NetworkManager.service
 ConditionPathExists=/etc/NetworkManager/system-connections/hotspot.nmconnection
 
 [Service]
