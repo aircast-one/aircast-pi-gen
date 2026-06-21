@@ -1,0 +1,29 @@
+[connection]
+id=hotspot
+uuid=c55cd01d-ba5d-4953-9416-e9d276ce1c05
+type=wifi
+autoconnect=true
+# Lowest priority of any Wi-Fi profile: NetworkManager joins a known client
+# network first and only falls back to broadcasting this AP when none connects.
+autoconnect-priority=-10
+
+[wifi]
+mode=ap
+# Placeholder — aircast-hotspot-ssid.service rewrites this to the device
+# hostname before NetworkManager activates the profile.
+ssid=aircast
+# 2.4GHz only: most compatible for AP mode on the Pi radio and valid under the
+# world ("00") regulatory domain when no WPA_COUNTRY is set.
+band=bg
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=raspberry
+
+[ipv4]
+# Shared mode runs NetworkManager's dnsmasq (DHCP for clients) and NATs out
+# whatever uplink is currently default (cellular/ethernet). Needs dnsmasq-base.
+method=shared
+
+[ipv6]
+method=disabled
