@@ -12,7 +12,7 @@ SKIP_IMAGES
 .claude/
 .vscode/
 .DS_Store
-dev-rebuild.sh
+build-local.sh
 
-# locally-built aircastd binary baked in by dev-rebuild.sh aircastd
+# locally-built aircastd binary baked in by build-local.sh aircastd
 stage3/11-install-aircastd/files/aircastd

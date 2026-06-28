@@ -1,0 +1,15 @@
+[Unit]
+Description=aircast first-boot: create the data partition for the overlay
+DefaultDependencies=no
+After=systemd-remount-fs.service systemd-udevd.service
+Wants=systemd-udevd.service
+Before=basic.target
+ConditionPathExists=!/dev/disk/by-label/data
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aircast-firstboot-data.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

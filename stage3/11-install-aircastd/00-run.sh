@@ -7,7 +7,7 @@
 # Two install paths:
 #   * Local dev — if files/aircastd (a locally-built arm64 binary, gitignored)
 #     is present, bake it straight in with the shipped unit. Lets you test an
-#     uncommitted aircastd without publishing a release; see dev-rebuild.sh.
+#     uncommitted aircastd without publishing a release; see build-local.sh.
 #   * Default — install from the shared, public aircast-apt S3 repository under
 #     the "aircastd" prefix (the same repo aircast.one/install.sh uses on real
 #     devices), so CI and clean builds need no auth to the private

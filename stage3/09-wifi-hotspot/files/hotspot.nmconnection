@@ -2,7 +2,7 @@
 id=hotspot
 uuid=c55cd01d-ba5d-4953-9416-e9d276ce1c05
 type=wifi
-autoconnect=true
+autoconnect=false
 autoconnect-priority=-10
 
 [wifi]

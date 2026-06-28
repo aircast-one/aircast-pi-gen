@@ -1,0 +1,15 @@
+[Unit]
+Description=Persist Tailscale state across factory reset (data/keep/tailscale)
+DefaultDependencies=no
+After=local-fs.target
+Before=tailscaled.service
+ConditionPathIsDirectory=/data/keep/tailscale
+
+[Mount]
+What=/data/keep/tailscale
+Where=/var/lib/tailscale
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,7 @@
+# Guarantee the factory-reset "keep" area exists on every boot, independent of
+# whether aircast-firstboot-data.sh finished creating the dirs. var-lib-tailscale.mount
+# binds keep/tailscale to /var/lib/tailscale, so this must exist before it runs —
+# otherwise Tailscale state would land in the wiped overlay layer.
+d /data 0755 root root -
+d /data/keep 0755 root root -
+d /data/keep/tailscale 0700 root root -
