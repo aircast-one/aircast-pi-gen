@@ -1,6 +1,6 @@
 [Unit]
 Description=aircastd device control plane (HTTP :80, manages mediamtx + mavp2p)
-After=network-online.target
+After=network-online.target tailscaled.service cloud-final.service
 Wants=network-online.target
 # Crash-loop protection: allow 20 restarts per 5 minutes.
 StartLimitIntervalSec=300
