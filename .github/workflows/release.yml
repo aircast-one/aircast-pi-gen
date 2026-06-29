@@ -116,7 +116,7 @@ jobs:
           sudo apt-get -o DPkg::Lock::Timeout=60 install -y \
             coreutils quilt parted qemu-user-static debootstrap zerofree zip \
             dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
-            gpg pigz xxd arch-test bmap-tools
+            gpg pigz xxd arch-test bmap-tools zstd
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -159,45 +159,51 @@ jobs:
 
           echo "Configuration created"
 
-      - name: Setup persistent cache (self-hosted optimization)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Restore base cache from S3 (stages 0-2)
         id: cache-setup
+        env:
+          # Bump to force a fresh base bake fleet-wide without touching stage files.
+          CACHE_VERSION: "1"
         run: |
-          CACHE_BASE=/opt/pi-gen-cache
-          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
-          echo "cache_base=$CACHE_BASE" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          WORK_DIR="work/${{ env.IMG_NAME }}"
 
-          # Ensure cache directory exists with correct permissions
-          # IMPORTANT: Do NOT use -R (recursive) here - rootfs files need to keep their original UIDs
-          sudo mkdir -p "$CACHE_BASE"/{work,apt-archives}
-          sudo chown $USER:$USER "$CACHE_BASE" "$CACHE_BASE/work" "$CACHE_BASE/apt-archives"
+          # Cache key: a content hash of everything that shapes the base rootfs
+          # (stages 0-2 + the bootstrap machinery), but NOT stage3 or the generated
+          # `config` (which carries the per-release version/channel). So editing
+          # stage3 or cutting a new release keeps the key stable and hits the cache;
+          # only a base change re-bakes. RELEASE is pinned to the value in `config`.
+          CACHE_KEY=$( {
+            find stage0 stage1 stage2 scripts export-image export-noobs Dockerfile depends \
+              -type f -exec sha256sum {} + 2>/dev/null
+            echo "RELEASE=trixie"
+            echo "CACHE_VERSION=${CACHE_VERSION}"
+          } | LC_ALL=C sort | sha256sum | cut -c1-32 )
+          CACHE_OBJ="s3://aircast-artifacts/pi-gen-cache/${{ env.IMG_NAME }}/${CACHE_KEY}.tar.zst"
+          echo "cache_obj=$CACHE_OBJ" >> "$GITHUB_OUTPUT"
+          echo "Base cache key: $CACHE_KEY"
+          echo "Base cache object: $CACHE_OBJ"
 
-          # Check if we have valid cached stage2 with rootfs
-          if [ -d "$CACHE_WORK_DIR/stage2/rootfs" ]; then
-            echo "Found cached stage2 rootfs - enabling incremental build"
-            echo "cache_hit=true" >> $GITHUB_OUTPUT
-
-            # Restore cached stages to work directory (build-docker.sh will detect and mount)
-            # Use sudo rsync -a to preserve ownership/permissions (rootfs has various UIDs)
-            sudo mkdir -p "work/${{ env.IMG_NAME }}"
-            for stage in stage0 stage1 stage2; do
-              if [ -d "$CACHE_WORK_DIR/$stage" ]; then
-                echo "Restoring $stage from cache..."
-                sudo rsync -a "$CACHE_WORK_DIR/$stage/" "work/${{ env.IMG_NAME }}/$stage/"
-                echo "  $stage: $(du -sh work/${{ env.IMG_NAME }}/$stage | cut -f1)"
-              fi
-            done
-            echo "Cache restored - build-docker.sh will auto-detect and skip cached stages"
+          mkdir -p "$WORK_DIR"
+          if aws s3 cp "$CACHE_OBJ" cache.tar.zst --no-progress 2>/dev/null; then
+            echo "Base cache HIT - restoring stages 0-2 and skipping their rebuild"
+            # -p/--numeric-owner: rootfs files carry assorted UIDs (e.g. pi=1000); sudo to write them.
+            sudo tar -I zstd -xpf cache.tar.zst -C "$WORK_DIR" --numeric-owner
+            rm -f cache.tar.zst
+            # pi-gen skips a stage's scripts (and its prerun) when a SKIP file exists
+            # in the stage dir (build.sh), reusing the restored work/IMG_NAME/stageN/rootfs.
+            touch stage0/SKIP stage1/SKIP stage2/SKIP
+            echo "cache_hit=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No valid cache found - will run full build"
-            echo "cache_hit=false" >> $GITHUB_OUTPUT
-            echo "Expected cache at: $CACHE_WORK_DIR/stage2/rootfs"
-          fi
-
-          # Setup apt cache for faster debootstrap
-          sudo mkdir -p /var/cache/apt/archives
-          if [ -d "$CACHE_BASE/apt-archives" ] && [ "$(ls -A $CACHE_BASE/apt-archives 2>/dev/null)" ]; then
-            echo "Restoring apt package cache..."
-            sudo cp -n "$CACHE_BASE/apt-archives"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+            echo "Base cache MISS - running a full build; stages 0-2 will be uploaded afterward"
+            echo "cache_hit=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Clean up Docker containers
@@ -219,36 +225,31 @@ jobs:
 
           echo "Build completed successfully!"
 
-      - name: Save cache for next build
-        if: success()
+      - name: Save base cache to S3 (stages 0-2)
+        # Only on a miss: a hit reused the identical, already-uploaded base, so
+        # stages 0-2 are byte-for-byte the cached ones and re-uploading is wasted work.
+        if: success() && steps.cache-setup.outputs.cache_hit == 'false'
         run: |
-          CACHE_BASE=/opt/pi-gen-cache
+          set -euo pipefail
           WORK_DIR="work/${{ env.IMG_NAME }}"
-          CACHE_WORK_DIR="$CACHE_BASE/work/${{ env.IMG_NAME }}"
-          echo "Saving build artifacts to persistent cache..."
+          CACHE_OBJ="${{ steps.cache-setup.outputs.cache_obj }}"
 
-          # Save stage rootfs for incremental builds
-          # Use sudo to preserve ownership/permissions (rootfs has various UIDs like 1000 for pi user)
           for stage in stage0 stage1 stage2; do
-            if [ -d "$WORK_DIR/$stage/rootfs" ]; then
-              echo "Caching $stage..."
-              sudo mkdir -p "$CACHE_WORK_DIR/$stage"
-              sudo rsync -a --delete "$WORK_DIR/$stage/" "$CACHE_WORK_DIR/$stage/"
-              echo "  Saved: $(du -sh $CACHE_WORK_DIR/$stage | cut -f1)"
-            else
-              echo "  $stage/rootfs not found at $WORK_DIR/$stage/rootfs"
+            if [ ! -d "$WORK_DIR/$stage/rootfs" ]; then
+              echo "ERROR: $WORK_DIR/$stage/rootfs missing - build did not persist work/ to the host."
+              echo "Check that build-docker.sh bind-mounts work/. Skipping cache upload."
+              exit 0
             fi
           done
 
-          # Save apt packages for faster debootstrap
-          if [ -d /var/cache/apt/archives ]; then
-            echo "Caching apt packages..."
-            mkdir -p "$CACHE_BASE/apt-archives"
-            sudo cp -n /var/cache/apt/archives/*.deb "$CACHE_BASE/apt-archives/" 2>/dev/null || true
-            echo "  Cached: $(ls $CACHE_BASE/apt-archives/*.deb 2>/dev/null | wc -l) packages"
-          fi
-
-          echo "Cache saved successfully!"
+          echo "Archiving base stages 0-2 (preserving ownership)..."
+          # -p/--numeric-owner so rootfs UIDs round-trip; sudo to read root-owned files.
+          sudo tar -I 'zstd -T0 -3' -cpf cache.tar.zst -C "$WORK_DIR" --numeric-owner stage0 stage1 stage2
+          echo "  Archive size: $(du -sh cache.tar.zst | cut -f1)"
+          echo "Uploading to $CACHE_OBJ ..."
+          aws s3 cp cache.tar.zst "$CACHE_OBJ" --no-progress
+          rm -f cache.tar.zst
+          echo "Base cache uploaded - subsequent builds on any runner will skip stages 0-2."
 
       - name: Build Statistics
         if: always()
@@ -258,11 +259,10 @@ jobs:
 
           # Check cache hit rate and estimate time savings
           if [ "${{ steps.cache-setup.outputs.cache_hit }}" == "true" ]; then
-            echo "Build type: INCREMENTAL (cached stages 0-2)"
+            echo "Build type: INCREMENTAL (S3 base cache hit; stages 0-2 reused)"
             echo "Estimated time saved: ~30-40 minutes"
           else
-            echo "Build type: FULL (no cache)"
-            echo "Cache will be saved for next build"
+            echo "Build type: FULL (base cache miss; stages 0-2 uploaded to S3)"
           fi
 
           # Show stage sizes (pi-gen uses work/IMG_NAME/stage* structure)
@@ -271,19 +271,13 @@ jobs:
           echo "Stage sizes:"
           for stage in stage0 stage1 stage2 stage3; do
             if [ -d "$WORK_DIR/$stage" ]; then
-              SIZE=$(du -sh "$WORK_DIR/$stage" 2>/dev/null | cut -f1 || echo "N/A")
+              SIZE=$(sudo du -sh "$WORK_DIR/$stage" 2>/dev/null | cut -f1 || echo "N/A")
               SKIP=""
-              [ -f "$WORK_DIR/$stage/SKIP" ] && SKIP=" (skipped)"
+              # SKIP markers live in the repo stage dir (build.sh checks there).
+              [ -f "$stage/SKIP" ] && SKIP=" (skipped)"
               echo "  - $stage: $SIZE$SKIP"
             fi
           done
-
-          # Show cache directory size
-          CACHE_BASE=/opt/pi-gen-cache
-          if [ -d "$CACHE_BASE" ]; then
-            echo ""
-            echo "Persistent cache size: $(du -sh $CACHE_BASE 2>/dev/null | cut -f1)"
-          fi
 
           # Show build logs
           if [ -f deploy/build-docker.log ]; then

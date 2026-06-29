@@ -91,7 +91,13 @@ if [ "${CONTAINER_EXISTS}" != "" ]; then
 else
   DOCKER_CMDLINE_NAME="${CONTAINER_NAME}"
   DOCKER_CMDLINE_PRE=""
-  DOCKER_CMDLINE_POST=""
+  # Bind-mount work/ to the host instead of using the Dockerfile's anonymous
+  # VOLUME. Without this, the rootfs the build produces lives only inside the
+  # container, so the host (and thus the S3 base cache) never sees it, and a
+  # restored cache never reaches the build. The bind makes incremental caching
+  # actually work: restore into ./work before the build, archive ./work after.
+  mkdir -p "${DIR}/work"
+  DOCKER_CMDLINE_POST="--volume ${DIR}/work:/pi-gen/work"
 fi
 
 # Check if binfmt_misc is required
