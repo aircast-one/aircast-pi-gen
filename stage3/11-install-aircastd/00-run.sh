@@ -69,7 +69,9 @@ dpkg-divert --local --rename --add /usr/bin/systemctl
 ln -sf /bin/true /usr/bin/systemctl
 
 apt-get update
-apt-get install -y --allow-downgrades ${aircastd_pkg}
+# Quote the pin: pre-release deb versions contain a tilde (e.g. 0.2.1~dev.2)
+# which the shell would otherwise tilde-expand (~ -> /root), corrupting it.
+apt-get install -y --allow-downgrades "${aircastd_pkg}"
 
 rm -f /usr/bin/systemctl
 dpkg-divert --local --rename --remove /usr/bin/systemctl
