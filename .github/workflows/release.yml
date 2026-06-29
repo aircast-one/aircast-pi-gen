@@ -93,6 +93,11 @@ jobs:
     needs: prepare
     runs-on: [self-hosted, Linux]
     environment: ${{ needs.prepare.outputs.environment }}
+    outputs:
+      # Versioned artifact name incl. its compression extension (e.g. .img.xz),
+      # derived from the actual built file so release/mirror never hardcode it
+      # and a future DEPLOY_COMPRESSION change can't drift the extension.
+      image_name: ${{ steps.artifacts.outputs.image_name }}
 
     steps:
       - name: Pre-cleanup (remove leftover work directories)
@@ -426,8 +431,8 @@ jobs:
           prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
           fail_on_unmatched_files: true
           files: |
-            release-assets/aircast-lite-arm64-${{ needs.prepare.outputs.version }}.img.xz
-            release-assets/aircast-lite-arm64-${{ needs.prepare.outputs.version }}.img.xz.sha256
+            release-assets/${{ needs.build.outputs.image_name }}
+            release-assets/${{ needs.build.outputs.image_name }}.sha256
 
   mirror-to-s3:
     needs: [prepare, build, release]
@@ -447,7 +452,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          ASSET="aircast-lite-arm64-${VERSION}.img.xz"
+          ASSET="${{ needs.build.outputs.image_name }}"
           echo "Waiting for release asset $ASSET to be available..."
           for i in $(seq 1 60); do
             if gh release view "$VERSION" -R "${{ github.repository }}" \
@@ -489,8 +494,8 @@ jobs:
           # attached to this release by earlier failed/partial runs.
           echo "Downloading release assets for $VERSION..."
           gh release download "$VERSION" -R ${{ github.repository }} \
-            --pattern "aircast-lite-arm64-${VERSION}.img.xz" \
-            --pattern "aircast-lite-arm64-${VERSION}.img.xz.sha256"
+            --pattern "${{ needs.build.outputs.image_name }}" \
+            --pattern "${{ needs.build.outputs.image_name }}.sha256"
 
           # Upload to S3 (use distribution-based path)
           S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/lite"
@@ -547,7 +552,7 @@ jobs:
 
           # Select the image by exact version match — never by filesystem sort/size,
           # which is fragile if stale files are ever present.
-          MAIN_IMAGE="aircast-lite-arm64-${VERSION}.img.xz"
+          MAIN_IMAGE="${{ needs.build.outputs.image_name }}"
           if [ ! -f "$MAIN_IMAGE" ]; then
             echo "[ERROR] Expected image file not found: $MAIN_IMAGE"
             ls -la aircast-lite-arm64-* 2>/dev/null || true
