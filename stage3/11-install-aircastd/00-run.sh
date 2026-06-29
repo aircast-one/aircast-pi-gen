@@ -51,7 +51,9 @@ echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRC
 # Falls back to channel-latest when no version is provided (local builds).
 if [ -n "${AIRCASTD_VERSION:-}" ]; then
 	deb_ver="${AIRCASTD_VERSION#v}"
-	deb_ver="${deb_ver/-/~}"
+	# Escape the '~': bash tilde-expands an unescaped replacement string in
+	# ${var/pat/~}, turning 0.2.1~dev.2 into 0.2.1/root... and breaking the pin.
+	deb_ver="${deb_ver/-/\~}"
 	aircastd_pkg="aircastd=${deb_ver}"
 	echo "aircastd: pinning to ${aircastd_pkg}"
 else
