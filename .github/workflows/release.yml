@@ -337,10 +337,10 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up build artifacts to free disk space..."
-          echo "Note: Persistent cache at /opt/pi-gen-cache is preserved for incremental builds"
+          echo "Note: the incremental base cache lives in S3, so work/ is safe to remove"
 
-          # Remove pi-gen work directory (9GB+)
-          # This is separate from the cache in /opt/pi-gen-cache
+          # Remove pi-gen work directory (9GB+). The base stages were already
+          # archived to S3 by the "Save base cache" step; this is just scratch.
           if [ -d "work" ]; then
             echo "Removing work directory..."
             sudo rm -rf work/
