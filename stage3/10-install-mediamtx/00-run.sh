@@ -1,8 +1,8 @@
 #!/bin/bash -e
 
-MEDIAMTX_VERSION="v1.19.1"
+MEDIAMTX_VERSION="v1.19.2"
 MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_arm64.tar.gz"
-MEDIAMTX_SHA256="97a277cf24153e168008c18da53fe84e8d364456e2d7b457dc0457666c32867b"
+MEDIAMTX_SHA256="562f419912a8668c18216a9e8c95359ec82fbb754e4a44e2953ef62b98eec688"
 
 on_chroot << EOF
 curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 -o /tmp/mediamtx.tar.gz "${MEDIAMTX_URL}"
