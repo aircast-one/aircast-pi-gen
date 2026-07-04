@@ -14,5 +14,6 @@ SKIP_IMAGES
 .DS_Store
 build-local.sh
 
-# locally-built aircastd binary baked in by build-local.sh aircastd
+# locally-built binaries baked in by build-local.sh aircastd
 stage3/11-install-aircastd/files/aircastd
+stage3/11-install-aircastd/files/aircast-streamer
