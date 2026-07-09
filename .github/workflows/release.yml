@@ -143,6 +143,22 @@ jobs:
       - name: Create build configuration
         run: |
           echo "Creating build configuration..."
+
+          # Pin aircast-streamer and aircast-siyi to whatever their apt
+          # channel currently serves, resolved ONCE here so a rebuild of the
+          # same image tag cannot silently pick up a newer daemon release.
+          # (aircastd's pin comes from the trigger payload below; these repos
+          # release independently and are not part of the payload.) A missing
+          # channel resolves to empty = no pin; the stage skips it entirely.
+          DIST='${{ needs.prepare.outputs.distribution }}'
+          resolve_pkg_version() {
+            curl -fsSL "https://aircast-apt.s3.us-east-1.amazonaws.com/$1/dists/${DIST}/main/binary-arm64/Packages" 2>/dev/null \
+              | awk -v pkg="$1" '$1=="Package:" && $2==pkg {found=1; next} found && $1=="Version:" {print $2; exit}'
+          }
+          STREAMER_VERSION="$(resolve_pkg_version aircast-streamer || true)"
+          SIYI_VERSION="$(resolve_pkg_version aircast-siyi || true)"
+          echo "Pinning aircast-streamer='${STREAMER_VERSION:-<absent>}' aircast-siyi='${SIYI_VERSION:-<absent>}' on channel ${DIST}"
+
           cat > config << EOF
           IMG_NAME='aircast-rpi-arm64'
           ENABLE_SSH=1
@@ -160,6 +176,8 @@ jobs:
           # the apt channel to pull aircastd from, and the exact version to pin.
           export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
           export AIRCASTD_VERSION='${{ needs.prepare.outputs.version }}'
+          export AIRCAST_STREAMER_VERSION='${STREAMER_VERSION}'
+          export AIRCAST_SIYI_VERSION='${SIYI_VERSION}'
           EOF
 
           echo "Configuration created"
