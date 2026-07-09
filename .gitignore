@@ -16,4 +16,5 @@ build-local.sh
 
 # locally-built binaries baked in by build-local.sh aircastd
 stage3/11-install-aircastd/files/aircastd
-stage3/11-install-aircastd/files/aircast-streamer
+stage3/11-install-aircast-streamer/files/aircast-streamer
+stage3/12-install-aircast-siyi/files/aircast-siyi

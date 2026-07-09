@@ -21,17 +21,11 @@
 install -m 440 files/010-aircast-nopasswd "${ROOTFS_DIR}/etc/sudoers.d/010-aircast-nopasswd"
 
 LOCAL_BIN="files/aircastd"
-LOCAL_STREAMER="files/aircast-streamer"
 if [ -f "${LOCAL_BIN}" ]; then
 	echo "aircastd: baking locally-built binary (${LOCAL_BIN}); skipping S3 apt repo"
-	# aircastd spawns aircast-streamer (the WHIP publisher) by bare name, so a
-	# locally-baked aircastd is broken without it. Require the companion binary.
-	if [ ! -f "${LOCAL_STREAMER}" ]; then
-		echo "aircastd: local ${LOCAL_BIN} present but ${LOCAL_STREAMER} missing (run build-local.sh aircastd)" >&2
-		exit 1
-	fi
+	# aircast-streamer (the WHIP publisher aircastd spawns by bare name) is
+	# installed by its own stage, 11-install-aircast-streamer, which runs first.
 	install -m 755 "${LOCAL_BIN}" "${ROOTFS_DIR}/usr/local/bin/aircastd"
-	install -m 755 "${LOCAL_STREAMER}" "${ROOTFS_DIR}/usr/local/bin/aircast-streamer"
 	install -m 644 files/aircastd.service "${ROOTFS_DIR}/etc/systemd/system/aircastd.service"
 	on_chroot << 'EOF'
 systemctl enable aircastd.service
@@ -42,21 +36,18 @@ fi
 AIRCAST_DISTRIBUTION="${AIRCAST_DISTRIBUTION:-development}"
 AIRCAST_APT_KEY_URL="https://aircast-apt.s3.us-east-1.amazonaws.com/public-key.gpg"
 AIRCAST_APT_BASE="https://aircast-apt.s3.us-east-1.amazonaws.com/aircastd"
-AIRCAST_STREAMER_APT_BASE="https://aircast-apt.s3.us-east-1.amazonaws.com/aircast-streamer"
 
 # Signing key (ASCII-armored) -> dearmored rootfs keyring. Host-side curl so we
-# get the retry behaviour; gpg is provided by the pi-gen build image.
+# get the retry behaviour; gpg is provided by the pi-gen build image. Shared
+# with 11-install-aircast-streamer; whichever stage runs first installs it.
 install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings"
-curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
-	"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
+if [ ! -f "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg" ]; then
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
+		"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
+fi
 
-# aircastd and its aircast-streamer companion ship as separate packages from
-# separate S3 apt prefixes, both signed by the same key and following the same
-# channel. aircastd spawns aircast-streamer by bare name, so the image needs both.
 echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_DISTRIBUTION} main" \
 	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast.list"
-echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_STREAMER_APT_BASE} ${AIRCAST_DISTRIBUTION} main" \
-	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast-streamer.list"
 
 # Pin to the exact released version so the image is deterministic — a later
 # release to the same channel can't change what a rebuild bakes in. Map the
@@ -73,14 +64,6 @@ else
 	echo "aircastd: no version pin; installing channel-latest"
 fi
 
-if [ -n "${AIRCAST_STREAMER_VERSION:-}" ]; then
-	streamer_pkg="aircast-streamer=$(deb_version "${AIRCAST_STREAMER_VERSION}")"
-	echo "aircast-streamer: pinning to ${streamer_pkg}"
-else
-	streamer_pkg="aircast-streamer"
-	echo "aircast-streamer: no version pin; installing channel-latest"
-fi
-
 on_chroot << EOF
 set -e
 # aircastd's postinst runs \`systemctl daemon-reload\` and \`systemctl restart\`
@@ -91,9 +74,9 @@ dpkg-divert --local --rename --add /usr/bin/systemctl
 ln -sf /bin/true /usr/bin/systemctl
 
 apt-get update
-# Quote the pins: pre-release deb versions contain a tilde (e.g. 0.2.1~dev.2)
+# Quote the pin: pre-release deb versions contain a tilde (e.g. 0.2.1~dev.2)
 # which the shell would otherwise tilde-expand (~ -> /root), corrupting it.
-apt-get install -y --allow-downgrades "${aircastd_pkg}" "${streamer_pkg}"
+apt-get install -y --allow-downgrades "${aircastd_pkg}"
 
 rm -f /usr/bin/systemctl
 dpkg-divert --local --rename --remove /usr/bin/systemctl
