@@ -1,0 +1,7 @@
+# aircast-siyi configuration. The daemon bridges a SIYI camera (UDP protocol)
+# to MAVLink via the local mavp2p endpoint.
+SIYI_MODEL=zr30
+# SIYI_CAMERA_ADDR=192.168.144.25:37260
+# SIYI_MAVLINK_ADDR=127.0.0.1:14550
+# SIYI_MAVLINK_SYSID=1
+# LOG_LEVEL=info
