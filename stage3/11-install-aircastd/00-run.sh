@@ -35,6 +35,9 @@ case "${AIRCAST_DISTRIBUTION:-development}" in
 esac
 printf '{"issuer":"%s","tokenUrl":"%s/v1/oauth2/token"}\n' "${OAUTH_ISSUER}" "${OAUTH_ISSUER}" \
 	> "${ROOTFS_DIR}/etc/aircast/oauth.json"
+# root-only: this file may later carry a client secret (per-device provisioning),
+# and aircastd runs as root — no other user needs to read it.
+chmod 600 "${ROOTFS_DIR}/etc/aircast/oauth.json"
 echo "aircastd: provisioned cloud issuer ${OAUTH_ISSUER} (distribution: ${AIRCAST_DISTRIBUTION:-development})"
 
 LOCAL_BIN="files/aircastd"
