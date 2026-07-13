@@ -20,6 +20,23 @@
 # Installed before either path so every image gets it.
 install -m 440 files/010-aircast-nopasswd "${ROOTFS_DIR}/etc/sudoers.d/010-aircast-nopasswd"
 
+# Provision the cloud environment (read-only): the OAuth issuer selects which
+# cloud (dev/prod) this device targets. aircastd reads *only* this file for it —
+# nothing environment-specific is baked into the binary. Production images prefill
+# the prod issuer; every other channel defaults to dev. Installed before either
+# install path so every image gets it. `just deploy` overwrites this per-device.
+# Issuer + derived token URL only — the client id/secret are per-device secrets and
+# must NOT be baked into a shared image; they are set per device (web UI or a
+# device-scoped provisioning step).
+install -d -m 755 "${ROOTFS_DIR}/etc/aircast"
+case "${AIRCAST_DISTRIBUTION:-development}" in
+	production) OAUTH_ISSUER="https://api.aircast.one" ;;
+	*)          OAUTH_ISSUER="https://api.dev.aircast.one" ;;
+esac
+printf '{"issuer":"%s","tokenUrl":"%s/v1/oauth2/token"}\n' "${OAUTH_ISSUER}" "${OAUTH_ISSUER}" \
+	> "${ROOTFS_DIR}/etc/aircast/oauth.json"
+echo "aircastd: provisioned cloud issuer ${OAUTH_ISSUER} (distribution: ${AIRCAST_DISTRIBUTION:-development})"
+
 LOCAL_BIN="files/aircastd"
 if [ -f "${LOCAL_BIN}" ]; then
 	echo "aircastd: baking locally-built binary (${LOCAL_BIN}); skipping S3 apt repo"
