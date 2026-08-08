@@ -40,6 +40,8 @@ echo "aircastd: provisioned cloud issuer ${OAUTH_ISSUER} (distribution: ${AIRCAS
 LOCAL_BIN="files/aircastd"
 if [ -f "${LOCAL_BIN}" ]; then
 	echo "aircastd: baking locally-built binary (${LOCAL_BIN}); skipping S3 apt repo"
+	# aircast-streamer (the WHIP publisher aircastd spawns by bare name) is
+	# installed by its own stage, 11-install-aircast-streamer, which runs first.
 	install -m 755 "${LOCAL_BIN}" "${ROOTFS_DIR}/usr/local/bin/aircastd"
 	install -m 644 files/aircastd.service "${ROOTFS_DIR}/etc/systemd/system/aircastd.service"
 	on_chroot << 'EOF'
@@ -53,10 +55,13 @@ AIRCAST_APT_KEY_URL="https://aircast-apt.s3.us-east-1.amazonaws.com/public-key.g
 AIRCAST_APT_BASE="https://aircast-apt.s3.us-east-1.amazonaws.com/aircastd"
 
 # Signing key (ASCII-armored) -> dearmored rootfs keyring. Host-side curl so we
-# get the retry behaviour; gpg is provided by the pi-gen build image.
+# get the retry behaviour; gpg is provided by the pi-gen build image. Shared
+# with 11-install-aircast-streamer; whichever stage runs first installs it.
 install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings"
-curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
-	"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
+if [ ! -f "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg" ]; then
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
+		"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
+fi
 
 echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_DISTRIBUTION} main" \
 	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast.list"
@@ -66,12 +71,10 @@ echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRC
 # release tag to its Debian package version: drop the leading 'v' and turn '-'
 # into '~' (nfpm's pre-release convention, e.g. v0.0.1-dev.3 -> 0.0.1~dev.3).
 # Falls back to channel-latest when no version is provided (local builds).
+deb_version() { local v="${1#v}"; echo "${v/-/\~}"; }
+
 if [ -n "${AIRCASTD_VERSION:-}" ]; then
-	deb_ver="${AIRCASTD_VERSION#v}"
-	# Escape the '~': bash tilde-expands an unescaped replacement string in
-	# ${var/pat/~}, turning 0.2.1~dev.2 into 0.2.1/root... and breaking the pin.
-	deb_ver="${deb_ver/-/\~}"
-	aircastd_pkg="aircastd=${deb_ver}"
+	aircastd_pkg="aircastd=$(deb_version "${AIRCASTD_VERSION}")"
 	echo "aircastd: pinning to ${aircastd_pkg}"
 else
 	aircastd_pkg="aircastd"

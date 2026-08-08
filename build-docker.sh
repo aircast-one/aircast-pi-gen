@@ -91,13 +91,23 @@ if [ "${CONTAINER_EXISTS}" != "" ]; then
 else
   DOCKER_CMDLINE_NAME="${CONTAINER_NAME}"
   DOCKER_CMDLINE_PRE=""
-  # Bind-mount work/ to the host instead of using the Dockerfile's anonymous
-  # VOLUME. Without this, the rootfs the build produces lives only inside the
-  # container, so the host (and thus the S3 base cache) never sees it, and a
-  # restored cache never reaches the build. The bind makes incremental caching
-  # actually work: restore into ./work before the build, archive ./work after.
-  mkdir -p "${DIR}/work"
-  DOCKER_CMDLINE_POST="--volume ${DIR}/work:/pi-gen/work"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # macOS: Docker Desktop's virtiofs bind mounts cannot create the links
+    # debootstrap extracts (apt 3.x ships usr/lib/apt/planners/dump as a link
+    # into solvers/), so stage0 dies with "tar: Cannot open: Permission
+    # denied". Use a named volume instead: Linux-native fs inside the VM,
+    # and it outlives the container so fast rebuilds keep their cached base.
+    # The S3 base-cache flow that needs ./work on the host is CI/Linux-only.
+    DOCKER_CMDLINE_POST="--volume ${CONTAINER_NAME}_work:/pi-gen/work"
+  else
+    # Bind-mount work/ to the host instead of using the Dockerfile's anonymous
+    # VOLUME. Without this, the rootfs the build produces lives only inside the
+    # container, so the host (and thus the S3 base cache) never sees it, and a
+    # restored cache never reaches the build. The bind makes incremental caching
+    # actually work: restore into ./work before the build, archive ./work after.
+    mkdir -p "${DIR}/work"
+    DOCKER_CMDLINE_POST="--volume ${DIR}/work:/pi-gen/work"
+  fi
 fi
 
 # Check if binfmt_misc is required

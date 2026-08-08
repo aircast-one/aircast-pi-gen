@@ -1,0 +1,21 @@
+[Unit]
+Description=aircast-siyi SIYI camera to MAVLink bridge
+After=network-online.target
+Wants=network-online.target mavp2p.service
+# Crash-loop protection: allow 20 restarts per 5 minutes.
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+User=root
+Group=root
+# Optional overrides: SIYI_CAMERA_ADDR, SIYI_MAVLINK_ADDR, SIYI_MAVLINK_SYSID,
+# SIYI_MODEL, LOG_LEVEL, LOG_FORMAT.
+EnvironmentFile=-/etc/default/aircast-siyi
+ExecStart=/usr/local/bin/aircast-siyi
+Restart=always
+RestartSec=2
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
