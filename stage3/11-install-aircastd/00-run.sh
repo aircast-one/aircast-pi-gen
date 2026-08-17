@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 # aircastd: device control plane. Serves the landing/status page on port 80 and
-# manages the mediamtx and mavp2p systemd units. It replaces the old lighttpd
+# manages the mediamtx systemd unit and an in-process MAVLink router. It replaces the old lighttpd
 # welcome page (see removed stage 09-welcome-page).
 #
 # Two install paths:
@@ -19,6 +19,26 @@
 # install the binary and restart services over SSH without a password prompt.
 # Installed before either path so every image gets it.
 install -m 440 files/010-aircast-nopasswd "${ROOTFS_DIR}/etc/sudoers.d/010-aircast-nopasswd"
+
+# Default telemetry config: aircastd's in-process MAVLink router listens on the
+# standard GCS port so ground stations and the on-device SIYI bridge reach it
+# out of the box (this replaces mavp2p's default endpoint). The operator can
+# change endpoints/baud in the aircastd UI; a factory reset clears this file.
+install -d -m 755 "${ROOTFS_DIR}/var/lib/aircastd"
+printf '%s\n' '{"baud":115200,"endpoints":["udps:0.0.0.0:14550"]}' \
+	> "${ROOTFS_DIR}/var/lib/aircastd/telemetry.json"
+chmod 600 "${ROOTFS_DIR}/var/lib/aircastd/telemetry.json"
+
+# ffmpeg powers the "video file" camera source: an operator uploads a clip in
+# the UI, aircastd drops it here and points MediaMTX at it via runOnDemand,
+# which runs ffmpeg to loop the file and republish it as RTSP — a stand-in
+# camera for testing detection and the overlays. Harmless on camera-only rigs.
+install -d -m 755 "${ROOTFS_DIR}/var/lib/aircast/media"
+on_chroot << 'EOF'
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends ffmpeg
+EOF
 
 LOCAL_BIN="files/aircastd"
 if [ -f "${LOCAL_BIN}" ]; then

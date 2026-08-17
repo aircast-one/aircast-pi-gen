@@ -1,0 +1,23 @@
+[Unit]
+Description=aircast-detect Hailo-8 object-detection sidecar
+After=network-online.target aircastd.service
+Wants=network-online.target aircastd.service
+# Needs the Hailo device node created by the hailo_pci driver.
+After=dev-hailo0.device
+# Crash-loop protection: allow 20 restarts per 5 minutes.
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+User=root
+Group=root
+# Optional overrides: AIRCASTD_API, DETECT_FPS, DETECT_CONF.
+EnvironmentFile=-/etc/default/aircast-detect
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /usr/local/lib/aircast-detect/detect.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 # aircast-siyi: SIYI camera <-> MAVLink bridge. Polls the SIYI gimbal camera
-# over its UDP protocol and presents it on the mavp2p endpoint as MAVLink
+# over its UDP protocol and presents it on the local aircastd MAVLink endpoint
 # camera (compid 100) + gimbal (compid 154) components, so any GCS can drive
 # pan/tilt/zoom/capture. Heartbeats are gated on camera liveness, so images
 # built with this stage are safe on devices without a SIYI camera attached —

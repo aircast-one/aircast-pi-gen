@@ -1,7 +1,7 @@
 [Unit]
 Description=aircast-siyi SIYI camera to MAVLink bridge
-After=network-online.target
-Wants=network-online.target mavp2p.service
+After=network-online.target aircastd.service
+Wants=network-online.target aircastd.service
 # Crash-loop protection: allow 20 restarts per 5 minutes.
 StartLimitIntervalSec=300
 StartLimitBurst=20

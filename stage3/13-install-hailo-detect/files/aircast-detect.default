@@ -1,0 +1,6 @@
+# aircast-detect configuration. The sidecar runs YOLO object detection on the
+# Hailo-8 for every camera the operator enables, and posts normalized boxes back
+# to aircastd, which relays them to viewers (web + QGC overlays).
+# AIRCASTD_API=http://127.0.0.1:80
+# DETECT_FPS=5
+# DETECT_CONF=0.4
