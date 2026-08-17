@@ -19,6 +19,11 @@ import uuid
 from dataclasses import dataclass, asdict
 from typing import Sequence
 
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay",
+)
+
 import cv2  # opencv-python-headless, FFmpeg backend for RTSP
 import numpy as np
 from hailo_platform import (
@@ -33,7 +38,7 @@ from hailo_platform import (
 )
 
 API = os.environ.get("AIRCASTD_API", "http://127.0.0.1:80")
-FPS = float(os.environ.get("DETECT_FPS", "5"))
+FPS = float(os.environ.get("DETECT_FPS", "10"))
 CONF = float(os.environ.get("DETECT_CONF", "0.4"))
 CONFIG_REFRESH = 10.0
 # A dead RTSP session still reports isOpened(), so consecutive empty reads are
@@ -90,12 +95,18 @@ class Model:
 
     def infer(self, frame_bgr: np.ndarray, labels: Sequence[str] = ()) -> list[Box]:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (self.w, self.h))
-        batch = np.expand_dims(resized, axis=0)
+        h0, w0 = rgb.shape[:2]
+        scale = min(self.w / w0, self.h / h0)
+        nw, nh = round(w0 * scale), round(h0 * scale)
+        px, py = (self.w - nw) // 2, (self.h - nh) // 2
+        canvas = np.full((self.h, self.w, 3), 114, dtype=np.uint8)
+        canvas[py:py + nh, px:px + nw] = cv2.resize(rgb, (nw, nh))
+        batch = np.expand_dims(canvas, axis=0)
         with self.group.activate():
             with InferVStreams(self.group, self.in_params, self.out_params) as pipe:
                 out = pipe.infer({self.in_info.name: batch})
-        return decode(out, CONF, labels)
+        return [unletterbox(b, self.w, self.h, px, py, nw, nh)
+                for b in decode(out, CONF, labels)]
 
     def release(self) -> None:
         try:
@@ -117,6 +128,17 @@ def _box(det, label: str) -> Box:
     return Box(label, round(float(det[4]), 3),
                round(xmin, 4), round(ymin, 4),
                round(xmax - xmin, 4), round(ymax - ymin, 4))
+
+
+def unletterbox(b: Box, mw: int, mh: int, px: int, py: int, nw: int, nh: int) -> Box:
+    x = (b.x * mw - px) / nw
+    y = (b.y * mh - py) / nh
+    x0 = min(max(x, 0.0), 1.0)
+    y0 = min(max(y, 0.0), 1.0)
+    return Box(b.label, b.conf,
+               round(x0, 4), round(y0, 4),
+               round(min(b.w * mw / nw, 1.0 - x0), 4),
+               round(min(b.h * mh / nh, 1.0 - y0), 4))
 
 
 def decode(raw: dict, conf: float, labels: Sequence[str] = ()) -> list[Box]:
@@ -190,6 +212,10 @@ class Capture:
             if now < self.retry_at:
                 return None
             self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+            try:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
             event(msg="stream opened", camera=self.name, source=self.source,
                   reopens=self.reopens)
         ok, frame = self.cap.read()
