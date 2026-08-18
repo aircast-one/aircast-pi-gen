@@ -28,6 +28,10 @@ on:
           - staging
           - development
         default: stable
+      aircastd_version:
+        description: 'aircastd version to bake (defaults to the image version)'
+        required: false
+        type: string
 
 env:
   IMG_NAME: aircast-rpi-arm64
@@ -39,6 +43,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
       environment: ${{ steps.version.outputs.environment }}
+      aircastd_version: ${{ steps.version.outputs.aircastd_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,9 +89,13 @@ jobs:
               ;;
           esac
 
+          AIRCASTD_VERSION="${{ inputs.aircastd_version }}"
+          AIRCASTD_VERSION="${AIRCASTD_VERSION:-$VERSION}"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "aircastd_version=$AIRCASTD_VERSION" >> $GITHUB_OUTPUT
           echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT)"
 
   build:
@@ -159,7 +168,7 @@ jobs:
           # inputs OR repository_dispatch payload). Exported so stage3 sees them:
           # the apt channel to pull aircastd from, and the exact version to pin.
           export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
-          export AIRCASTD_VERSION='${{ needs.prepare.outputs.version }}'
+          export AIRCASTD_VERSION='${{ needs.prepare.outputs.aircastd_version }}'
           EOF
 
           echo "Configuration created"
