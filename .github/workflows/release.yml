@@ -139,6 +139,12 @@ jobs:
 
       - name: Clean up stale buildx builders
         run: |
+          # buildx ls only sees the current user's builders; this box runs two
+          # runner users against one docker daemon, so clean daemon-wide.
+          for c in $(docker ps -a --format '{{.Names}}' | grep '^buildx_buildkit_builder-'); do
+            docker rm -f "$c" 2>/dev/null || true
+          done
+          docker volume ls -q | grep '^buildx_buildkit_builder-' | xargs -r docker volume rm 2>/dev/null || true
           for b in $(docker buildx ls --format '{{.Name}}' | grep '^builder-'); do
             docker buildx rm "$b" 2>/dev/null || true
           done
