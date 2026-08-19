@@ -33,7 +33,17 @@ modprobe overlay 2>/dev/null || true
 mkdir -p "$DATA"
 mount -t ext4 "$DATA_DEV" "$DATA" || { log_failure_msg "aircast-overlay: mount data failed; booting without overlay"; exit 0; }
 
-# Factory reset: remove the flag first; wipe only if removal succeeded.
+# Drop the layer as a whole rather than globbing its contents: a glob skips
+# dotfiles and overlayfs whiteouts (.wh.*), which is precisely the state a wipe
+# has to clear. The dirs are recreated below.
+wipe_upper() {
+	rm -rf "$DATA/overlay/upper" "$DATA/overlay/work" 2>/dev/null || true
+}
+
+# Every flash restores the boot partition to the image's pristine contents, so it
+# is the one surface that can distinguish a reboot from a re-flash. Both triggers
+# below clear their flag FIRST and wipe only once that succeeded, so a failed
+# write can never become a wipe-on-every-boot loop.
 BOOT=/run/aircast-boot
 BOOT_DEV=$(findfs LABEL=bootfs 2>/dev/null || true)
 [ -b "$BOOT_DEV" ] || BOOT_DEV=/dev/disk/by-label/bootfs
@@ -42,7 +52,21 @@ if [ -b "$BOOT_DEV" ] && mount -t vfat -o rw "$BOOT_DEV" "$BOOT" 2>/dev/null; th
 	if [ -f "$BOOT/factory-reset" ] && rm -f "$BOOT/factory-reset" 2>/dev/null; then
 		sync
 		log_warning_msg "aircast-overlay: factory reset requested — wiping writable layer"
-		rm -rf "$DATA"/overlay/upper/* "$DATA"/overlay/work/* 2>/dev/null || true
+		wipe_upper
+	fi
+	# The data partition lives past the image, so a flash leaves it untouched. A
+	# layer with no marker beside it belongs to the install that was flashed away
+	# — its /etc, its NetworkManager profiles, its cloud-init instance cache — and
+	# adopting it would silently shadow the image the operator just wrote, down to
+	# cloud-init deciding it has already run.
+	if [ ! -f "$BOOT/aircast-installed" ]; then
+		if touch "$BOOT/aircast-installed" 2>/dev/null; then
+			sync
+			log_warning_msg "aircast-overlay: freshly flashed card — discarding the previous install's writable layer"
+			wipe_upper
+		else
+			log_failure_msg "aircast-overlay: boot partition not writable; keeping the previous install's writable layer"
+		fi
 	fi
 	umount "$BOOT" 2>/dev/null || true
 else

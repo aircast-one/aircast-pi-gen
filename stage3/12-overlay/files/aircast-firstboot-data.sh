@@ -39,6 +39,7 @@ data_part="${partprefix}3"
 
 # Create partition 3 only if it does not already exist (resume a partial run
 # without ever making a duplicate).
+created=0
 if [ ! -b "$data_part" ]; then
 	table=$(parted -ms "$disk" unit s print)
 	end_p2=$(printf '%s\n' "$table" | awk -F: '$1=="2"{gsub(/s/,"",$3); print $3}')
@@ -56,6 +57,7 @@ if [ ! -b "$data_part" ]; then
 	log "creating data partition: sectors ${start}..${end} (~${free_mb}MB)"
 	# Explicit "s" suffix on each value — unambiguous across parted versions.
 	parted -s -a optimal "$disk" mkpart primary ext4 "${start}s" "${end}s"
+	created=1
 fi
 
 partprobe "$disk" 2>/dev/null || true
@@ -69,14 +71,19 @@ if [ ! -b "$data_part" ]; then
 	exit 0
 fi
 
-# Format only a partition that has no filesystem — refuse to clobber anything.
-if blkid "$data_part" >/dev/null 2>&1; then
+# Refuse to clobber a partition that was already on the disk when we got here.
+# A partition we just carved out ourselves is different: the image's own table
+# never claimed those sectors, so any filesystem sitting there is a leftover from
+# the card's previous life and formatting it is the whole point. Without this
+# distinction a re-flashed card dead-ends here — the old data partition is found,
+# never labelled, and the overlay silently never engages.
+if [ "$created" -eq 0 ] && blkid "$data_part" >/dev/null 2>&1; then
 	log "refusing to format $data_part: it already has a filesystem"
 	exit 0
 fi
 log "formatting $data_part ext4 label=$DATA_LABEL"
-# -F: non-interactive (a oneshot has no tty); safe here — we verified above that
-# $data_part is partition 3 and carries no filesystem.
+# -F: non-interactive (a oneshot has no tty), and it overwrites any stale
+# filesystem left in the sectors we just claimed.
 mkfs.ext4 -F -q -L "$DATA_LABEL" "$data_part"
 
 mnt=$(mktemp -d)
