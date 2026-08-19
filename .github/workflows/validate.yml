@@ -7,7 +7,7 @@ on:
       - 'justfile'
       - '.github/workflows/validate.yml'
   push:
-    branches: [main, arm64]
+    branches: [lite-arm64]
     paths:
       - 'stage**'
       - 'justfile'
