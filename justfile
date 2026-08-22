@@ -8,12 +8,12 @@
 # reuse the cached stage0-2 base (pigen_work), apt-cacher-ng caches .deb
 # downloads, and a locally-built aircastd is baked in instead of pulled from S3.
 #
-# build*    picks WHICH aircastd goes in; rebuild* keeps what is already staged.
-# *-clean   rebuilds every stage instead of stage3 alone.
-#
 # Testing a change:  just build
-# First run:         just build-clean
-# Shipping:          just build-release v1.2.3 v0.3.4 && just publish v1.2.3
+# Shipping:          just build v1.2.3 v0.3.4  &&  just publish v1.2.3
+#
+# The first build of the day rebuilds every stage on its own; later ones reuse
+# the cached base and redo stage3 only. `just reset` forces the long way round.
+# build-local.sh exposes the rest of the matrix if you need it.
 
 # Line recipes run under bash with fail-fast flags.
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
@@ -24,35 +24,16 @@ deploy_dir := "deploy"
 default:
     @just --list
 
-# Image carrying your working-copy aircastd — the everyday loop
+# Build an image — bare for testing your working-copy aircastd, with a version to publish
 [group('build')]
-build:
-    ./build-local.sh aircastd
-
-# Same, but rebuild every stage: first run, or after the Debian base changed
-[group('build')]
-build-clean:
-    ./build-local.sh full aircastd
-
-# Image carrying the released aircastd from apt instead of your working copy
-[group('build')]
-build-from-apt:
-    ./build-local.sh fast s3
-
-# Publishable image: apt aircastd, release provenance, xz — what CI would build
-[group('build')]
-build-release VERSION AIRCASTD="":
-    AIRCASTD_VERSION={{AIRCASTD}} ./build-local.sh prod {{VERSION}}
-
-# Rebuild stage3 with whatever binaries are already staged
-[group('build')]
-rebuild:
-    ./build-local.sh fast
-
-# Rebuild every stage with whatever binaries are already staged
-[group('build')]
-rebuild-clean:
-    ./build-local.sh full
+build VERSION="" AIRCASTD="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{VERSION}}" ]; then
+        AIRCASTD_VERSION={{AIRCASTD}} ./build-local.sh prod {{VERSION}}
+    else
+        ./build-local.sh aircastd
+    fi
 
 # Upload the newest deploy/ image to the channel its version implies
 [group('release')]

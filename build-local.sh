@@ -29,7 +29,7 @@ Base mode (first arg, default: fast):
   full   Clean build of all stages. Run once to seed the cached work volume
          (pigen_work); the container is kept for future fast builds.
   fast   Reuse the cached base (stage0-2), rebuild ONLY stage3 on a clean
-         stage3 rootfs. Requires a prior `full`.
+         stage3 rootfs. Falls back to a full build when there is no base.
 
 aircastd source (second arg, optional):
   aircastd   Build aircastd from ../aircastd (just build-pi) and bake the local
@@ -107,11 +107,12 @@ has_cached_base() {
 
 # Rebuild stage3 only, reusing the cached stage0-2 base from a prior full build.
 build_fast() {
-	ensure_apt_cache
 	if ! has_cached_base; then
-		echo "!! no cached stage0-2 base — run './build-local.sh full' once first" >&2
-		exit 1
+		echo ">> no cached stage0-2 base yet — building every stage first"
+		build_full
+		return
 	fi
+	ensure_apt_cache
 	# Wipe stage3's work dir so its prerun re-copies a clean rootfs from the
 	# cached stage2 (prerun only copies when stage3/rootfs is absent).
 	echo ">> clearing stage3 work dir for a clean rebuild"
@@ -149,11 +150,7 @@ build_prod() {
 		echo "export PI_GEN_COMMIT='$(git rev-parse --short HEAD)'"
 	} >> "$PROD_CONFIG"
 	echo ">> PROD build ${version} (channel ${channel}, aircastd ${AIRCASTD_VERSION:-channel-latest})"
-	if has_cached_base; then
-		BUILD_CONFIG="$PROD_CONFIG" build_fast
-	else
-		BUILD_CONFIG="$PROD_CONFIG" build_full
-	fi
+	BUILD_CONFIG="$PROD_CONFIG" build_fast
 }
 
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
