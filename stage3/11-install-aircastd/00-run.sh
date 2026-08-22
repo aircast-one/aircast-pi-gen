@@ -30,8 +30,8 @@ install -m 440 files/010-aircast-nopasswd "${ROOTFS_DIR}/etc/sudoers.d/010-airca
 # device-scoped provisioning step).
 install -d -m 755 "${ROOTFS_DIR}/etc/aircast"
 case "${AIRCAST_DISTRIBUTION:-development}" in
-	production) OAUTH_ISSUER="https://api.aircast.one" ;;
-	*)          OAUTH_ISSUER="https://api.dev.aircast.one" ;;
+	stable|production) OAUTH_ISSUER="https://api.aircast.one" ;;
+	*)                 OAUTH_ISSUER="https://api.dev.aircast.one" ;;
 esac
 printf '{"issuer":"%s","tokenUrl":"%s/v1/oauth2/token"}\n' "${OAUTH_ISSUER}" "${OAUTH_ISSUER}" \
 	> "${ROOTFS_DIR}/etc/aircast/oauth.json"
