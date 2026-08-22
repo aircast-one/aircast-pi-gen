@@ -44,9 +44,7 @@ publish VERSION *ARGS:
 # Start the apt-cacher-ng container (caches .deb downloads across builds)
 [group('cache')]
 cache:
-    docker start aircast-apt-cacher >/dev/null 2>&1 || \
-        docker run -d --name aircast-apt-cacher --restart=always -p 3142:3142 \
-            -v aircast-apt-cache:/var/cache/apt-cacher-ng sameersbn/apt-cacher-ng
+    ./build-local.sh cache
 
 # Remove the cached build container; the next build must rebuild every stage
 [group('cache')]
@@ -90,6 +88,17 @@ lint-stage-scripts:
         echo "ERROR: pi-gen silently skips scripts whose names do not match NN-run.sh or NN-run-chroot.sh."
         echo "Offenders:"
         echo "$bad" | sed 's/^/  - /'
+        exit 1
+    fi
+    hollow=$(find stage* -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' 2>/dev/null \
+        | while IFS= read -r d; do
+            [ -n "$(find "$d" -type f -print -quit)" ] || continue
+            ls "$d" | grep -qE '^[0-9]{2}-(run(-chroot)?\.sh|packages(-nr)?|debconf|patches)$' || echo "$d"
+        done)
+    if [ -n "$hollow" ]; then
+        echo "ERROR: sub-stage has files but no NN-run script or NN-packages — pi-gen silently skips it."
+        echo "Offenders:"
+        echo "$hollow" | sed 's/^/  - /'
         exit 1
     fi
     echo "All stage sub-scripts have valid names."
