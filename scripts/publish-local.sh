@@ -104,6 +104,31 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+aws s3 cp "${S3_PATH}/releases.json" "${WORK}/existing.json" 2>/dev/null \
+    || echo '{"releases":[]}' > "${WORK}/existing.json"
+
+# A new version may never move its own major.minor line backwards: with 0.34.1
+# published, 0.34.0 is refused while 0.34.2 is fine. Older lines stay
+# publishable for hotfixes; the semver sort below keeps them off "latest".
+if [ -z "$REPUBLISH" ]; then
+    BARE="${VERSION#v}"
+    LINE="${BARE%%-*}"
+    LINE="${LINE%.*}"
+    HIGHEST=$(jq -r --arg line "${LINE}." \
+        '[.releases[].version | ltrimstr("v") | select(startswith($line))]
+         | sort_by([splits("[.-]")] | map(tonumber? // .)) | last // empty' \
+        "${WORK}/existing.json")
+    if [ -n "$HIGHEST" ]; then
+        NEWER=$(jq -rn --arg a "$HIGHEST" --arg b "$BARE" \
+            'def key: [splits("[.-]")] | map(tonumber? // .);
+             ($a | key) < ($b | key)')
+        if [ "$NEWER" != "true" ]; then
+            echo "Refusing to publish ${VERSION}: the ${LINE} line is already at ${HIGHEST}. Only a higher ${LINE}.x may be published." >&2
+            exit 1
+        fi
+    fi
+fi
+
 cp "$IMAGE_PATH" "${WORK}/${ASSET}"
 ( cd "$WORK" && sha256_of "$ASSET" > "$CHECKSUM" )
 
@@ -128,9 +153,6 @@ REMOTE_SIZE=$(aws s3api head-object --bucket "$BUCKET" \
     exit 1
 }
 
-aws s3 cp "${S3_PATH}/releases.json" "${WORK}/existing.json" 2>/dev/null \
-    || echo '{"releases":[]}' > "${WORK}/existing.json"
-
 jq -n \
     --arg version "$VERSION" \
     --argjson prerelease "$([ "$DISTRIBUTION" = stable ] && echo false || echo true)" \
@@ -145,8 +167,12 @@ jq -n \
               download_url: $download_url, checksum_url: $checksum_url}}' \
     > "${WORK}/new.json"
 
+# Highest version first, whatever order things were published in: a hotfix on
+# an old line lands in its right place instead of becoming "latest".
 jq --slurpfile new "${WORK}/new.json" \
-    '.releases = [$new[0]] + [.releases[] | select(.version != $new[0].version)]' \
+    'def key: .version | ltrimstr("v") | [splits("[.-]")] | map(tonumber? // .);
+     .releases = ([$new[0]] + [.releases[] | select(.version != $new[0].version)]
+                  | sort_by(key) | reverse)' \
     "${WORK}/existing.json" > "${WORK}/releases.json"
 
 aws s3 cp "${WORK}/releases.json" "${S3_PATH}/releases.json"
