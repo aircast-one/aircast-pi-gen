@@ -10,6 +10,7 @@
 #
 # Testing a change:  just build
 # Shipping:          just build v1.2.3 v0.3.4  &&  just publish v1.2.3
+# Re-releasing:      just build v1.2.3 v0.3.4  &&  just publish v1.2.3 --yes --force
 #
 # The first build of the day rebuilds every stage on its own; later ones reuse
 # the cached base and redo stage3 only. `just reset` forces the long way round.
@@ -35,7 +36,7 @@ build VERSION="" AIRCASTD="":
         ./build-local.sh aircastd
     fi
 
-# Upload the newest deploy/ image to the channel its version implies
+# Upload the newest deploy/ image to the channel its version implies (--force replaces an already published version)
 [group('release')]
 publish VERSION *ARGS:
     ./scripts/publish-local.sh {{VERSION}} {{ARGS}}

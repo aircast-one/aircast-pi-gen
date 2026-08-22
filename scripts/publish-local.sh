@@ -23,8 +23,17 @@ if [ "${1:-}" = "--print-channel" ]; then
     exit 0
 fi
 
-VERSION="${1:?Usage: $0 <vX.Y.Z[-dev.N|-stage.N|-rc.N]> [--yes]}"
-ASSUME_YES="${2:-}"
+VERSION="${1:?Usage: $0 <vX.Y.Z[-dev.N|-stage.N|-rc.N]> [--yes] [--force]}"
+shift
+ASSUME_YES=""
+FORCE=""
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y)   ASSUME_YES="--yes" ;;
+        --force|-f) FORCE=1 ;;
+        *) echo "Unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
 
 valid_version "$VERSION" || {
     echo "Invalid version: $VERSION" >&2
@@ -74,8 +83,12 @@ if [ "$DISTRIBUTION" = "stable" ] && [ "$ASSUME_YES" != "--yes" ]; then
 fi
 
 if aws s3api head-object --bucket "$BUCKET" --key "${DISTRIBUTION}/${URL_PATH}/${VERSION}/${ASSET}" >/dev/null 2>&1; then
-    echo "Refusing to overwrite an already published ${VERSION}. Pick a new version." >&2
-    exit 1
+    if [ -z "$FORCE" ]; then
+        echo "Refusing to overwrite an already published ${VERSION}. Re-release with --force, or pick a new version." >&2
+        exit 1
+    fi
+    echo "Replacing already published ${VERSION} (--force)"
+    aws s3 rm --recursive "${S3_PATH}/${VERSION}/"
 fi
 
 WORK=$(mktemp -d)
