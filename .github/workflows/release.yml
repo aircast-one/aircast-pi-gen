@@ -45,7 +45,7 @@ jobs:
       aircastd_version: ${{ steps.version.outputs.aircastd_version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -113,7 +113,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.version }}
           fetch-depth: 0
@@ -127,30 +127,12 @@ jobs:
             gpg pigz xxd arch-test bmap-tools zstd
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
-      - name: Clean up stale buildx builders
-        run: |
-          # buildx ls only sees the current user's builders; this box runs two
-          # runner users against one docker daemon, so clean daemon-wide.
-          for c in $(docker ps -a --format '{{.Names}}' | grep '^buildx_buildkit_builder-'); do
-            docker rm -f "$c" 2>/dev/null || true
-          done
-          docker volume ls -q | grep '^buildx_buildkit_builder-' | xargs -r docker volume rm 2>/dev/null || true
-          for b in $(docker buildx ls --format '{{.Name}}' | grep '^builder-'); do
-            docker buildx rm "$b" 2>/dev/null || true
-          done
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker
-          install: true
-
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -402,7 +384,7 @@ jobs:
           echo "Prepared artifact: $NEW_NAME"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pi-image
           path: |
@@ -466,14 +448,14 @@ jobs:
           rm -f aircast-lite-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pi-image
           path: release-assets
 
       - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -512,7 +494,7 @@ jobs:
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
