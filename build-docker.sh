@@ -96,8 +96,15 @@ else
   # container, so the host (and thus the S3 base cache) never sees it, and a
   # restored cache never reaches the build. The bind makes incremental caching
   # actually work: restore into ./work before the build, archive ./work after.
-  mkdir -p "${DIR}/work"
-  DOCKER_CMDLINE_POST="--volume ${DIR}/work:/pi-gen/work"
+  # macOS: APFS is case-insensitive, so debootstrap dies unpacking a rootfs that
+  # contains both pam.7.gz and PAM.7.gz. Keep work/ on a named volume inside the
+  # Linux VM instead; build-local.sh removes it to force a clean full build.
+  if [ "$(uname)" = Darwin ]; then
+    DOCKER_CMDLINE_POST="--volume ${CONTAINER_NAME}_work:/pi-gen/work"
+  else
+    mkdir -p "${DIR}/work"
+    DOCKER_CMDLINE_POST="--volume ${DIR}/work:/pi-gen/work"
+  fi
 fi
 
 # Check if binfmt_misc is required
