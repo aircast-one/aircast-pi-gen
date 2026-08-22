@@ -35,6 +35,16 @@ seed:
 fast:
     ./build-local.sh fast
 
+# Release-equivalent local build: aircastd from apt, real provenance, xz output
+[group('build')]
+image-prod VERSION AIRCASTD="":
+    AIRCASTD_VERSION={{AIRCASTD}} ./build-local.sh prod {{VERSION}}
+
+# Publish the newest deploy/ image to the channel its version implies
+[group('release')]
+publish VERSION *ARGS:
+    ./scripts/publish-local.sh {{VERSION}} {{ARGS}}
+
 # Full clean rebuild of every stage (S3 aircastd unless a binary is injected)
 [group('build')]
 full:
@@ -50,7 +60,7 @@ s3:
 cache:
     docker start aircast-apt-cacher >/dev/null 2>&1 || \
         docker run -d --name aircast-apt-cacher --restart=always -p 3142:3142 \
-            -v aircast-apt-cache:/var/cache/apt-cacher-ng aircast-apt-cacher
+            -v aircast-apt-cache:/var/cache/apt-cacher-ng sameersbn/apt-cacher-ng
 
 # Remove the cached build container; the next build must re-seed via `just seed`
 [group('cache')]
@@ -61,7 +71,7 @@ reset:
 # Show the newest built image in deploy/
 [group('image')]
 latest:
-    @ls -t {{deploy_dir}}/*.img.xz 2>/dev/null | head -1 || \
+    @ls -t {{deploy_dir}}/*.img {{deploy_dir}}/*.img.xz 2>/dev/null | head -1 || \
         echo "no image in {{deploy_dir}}/ — run 'just image'"
 
 # Tags drive the delivery pipeline (.github/workflows/release.yml) and the tag
