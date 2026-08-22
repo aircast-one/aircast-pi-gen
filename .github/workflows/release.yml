@@ -141,6 +141,32 @@ jobs:
           driver: docker
           install: true
 
+      - name: Ensure apt-cacher-ng proxy
+        id: apt-proxy
+        run: |
+          docker start apt-cacher-ng 2>/dev/null || \
+            docker run -d --name apt-cacher-ng --restart unless-stopped \
+              -p 3142:3142 -v apt-cacher-ng-cache:/var/cache/apt-cacher-ng \
+              sameersbn/apt-cacher-ng:3.7.4-20220421 || true
+
+          # 172.17.0.1 is the docker0 bridge IP: the only host address the
+          # pi-gen container (and the chroot inside it) can always reach.
+          PROXY_URL="http://172.17.0.1:3142"
+          for _ in $(seq 1 10); do
+            # Same reachability semantics as build.sh's own APT_PROXY check
+            # (plain curl, any HTTP response counts).
+            if curl -sm 2 "$PROXY_URL" -o /dev/null; then
+              echo "url=$PROXY_URL" >> "$GITHUB_OUTPUT"
+              echo "apt-cacher-ng reachable at $PROXY_URL - apt downloads will be cached"
+              exit 0
+            fi
+            sleep 1
+          done
+          # Empty APT_PROXY means "no proxy" to build.sh, so a broken cacher
+          # degrades to an uncached build instead of failing the release.
+          echo "url=" >> "$GITHUB_OUTPUT"
+          echo "[WARN] apt-cacher-ng not reachable - building without apt cache"
+
       - name: Create build configuration
         run: |
           echo "Creating build configuration..."
@@ -156,6 +182,7 @@ jobs:
           WPA_COUNTRY=GE
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
+          APT_PROXY='${{ steps.apt-proxy.outputs.url }}'
           # Exported so stage3 sees them: the apt channel to pull aircastd from,
           # the exact version to pin (empty = channel-latest), and the provenance
           # baked into /etc/aircast-release.json.
