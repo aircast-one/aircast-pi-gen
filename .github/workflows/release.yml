@@ -217,8 +217,11 @@ jobs:
           # stage3 or cutting a new release keeps the key stable and hits the cache;
           # only a base change re-bakes. RELEASE is pinned to the value in `config`.
           CACHE_KEY=$( {
+            # scripts/release*.sh are tag-cutting tooling with no effect on the
+            # rootfs; hashing them rotated the key on test-only commits.
             find stage0 stage1 stage2 scripts export-image export-noobs Dockerfile depends \
-              -type f -exec sha256sum {} + 2>/dev/null
+              -type f -not -name 'release.sh' -not -name 'release_test.sh' \
+              -exec sha256sum {} + 2>/dev/null
             echo "RELEASE=trixie"
             echo "CACHE_VERSION=${CACHE_VERSION}"
           } | LC_ALL=C sort | sha256sum | cut -c1-32 )
