@@ -29,7 +29,7 @@ on:
           - development
         default: stable
       aircastd_version:
-        description: 'aircastd version to bake (defaults to the image version)'
+        description: 'aircastd version to pin (empty = newest in the channel)'
         required: false
         type: string
 
@@ -52,8 +52,9 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            # Triggered by aircast-agent release
+            # Triggered by an aircastd/aircast-agent release
             VERSION="${{ github.event.client_payload.version }}"
+            AIRCASTD_VERSION="$VERSION"
 
             # Determine distribution from event type
             case "${{ github.event.action }}" in
@@ -77,6 +78,7 @@ jobs:
             # Manual dispatch
             VERSION="${{ inputs.version }}"
             DISTRIBUTION="${{ inputs.distribution }}"
+            AIRCASTD_VERSION="${{ inputs.aircastd_version }}"
           fi
 
           # Set environment based on distribution
@@ -88,9 +90,6 @@ jobs:
               ENVIRONMENT="production"
               ;;
           esac
-
-          AIRCASTD_VERSION="${{ inputs.aircastd_version }}"
-          AIRCASTD_VERSION="${AIRCASTD_VERSION:-$VERSION}"
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
