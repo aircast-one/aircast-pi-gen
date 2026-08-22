@@ -24,6 +24,14 @@ on:
         required: false
         type: string
 
+# The runner box has two runner slots sharing one docker daemon, and the build
+# uses a fixed container name (pigen_work) plus daemon-wide cleanup steps — two
+# release builds running at once would docker-rm each other's containers
+# mid-build. Serialize them.
+concurrency:
+  group: pi-image-build
+  cancel-in-progress: false
+
 env:
   IMG_NAME: aircast-rpi-arm64
 
