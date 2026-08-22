@@ -46,7 +46,7 @@ size_of() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
 
 DEPLOY_DIR="${DEPLOY_DIR:-deploy}"
 IMAGE_PATH=$(ls -t "${DEPLOY_DIR}"/*.img "${DEPLOY_DIR}"/*.img.xz "${DEPLOY_DIR}"/*.img.gz "${DEPLOY_DIR}"/*.zip 2>/dev/null | head -n 1 || true)
-[ -n "$IMAGE_PATH" ] || { echo "No image in ${DEPLOY_DIR}/ — run 'just image' first" >&2; exit 1; }
+[ -n "$IMAGE_PATH" ] || { echo "No image in ${DEPLOY_DIR}/ — run 'just build-release <version>' first" >&2; exit 1; }
 
 case "$IMAGE_PATH" in
     *.img.xz) EXT="img.xz" ;;

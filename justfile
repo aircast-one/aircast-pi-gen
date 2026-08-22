@@ -4,12 +4,16 @@
 # does the real work; see that script and README.md for the build pipeline.
 #
 # On Apple Silicon the image builds NATIVELY (arm64 host + arm64 Docker), so
-# there is no QEMU emulation penalty. Speedups baked in: `fast` reuses the
-# cached stage0-2 base (pigen_work), apt-cacher-ng caches .deb downloads, and a
-# locally-built aircastd is baked straight in instead of pulled from S3.
+# there is no QEMU emulation penalty. Speedups baked in: stage3-only rebuilds
+# reuse the cached stage0-2 base (pigen_work), apt-cacher-ng caches .deb
+# downloads, and a locally-built aircastd is baked in instead of pulled from S3.
 #
-# Everyday loop:  just image     (fresh local aircastd + stage3-only rebuild)
-# First run:      just seed      (clean all stages once to seed the cache)
+# build*    picks WHICH aircastd goes in; rebuild* keeps what is already staged.
+# *-clean   rebuilds every stage instead of stage3 alone.
+#
+# Testing a change:  just build
+# First run:         just build-clean
+# Shipping:          just build-release v1.2.3 v0.3.4 && just publish v1.2.3
 
 # Line recipes run under bash with fail-fast flags.
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
@@ -20,40 +24,40 @@ deploy_dir := "deploy"
 default:
     @just --list
 
-# Build local aircastd + fast stage3-only rebuild — the everyday loop
+# Image carrying your working-copy aircastd — the everyday loop
 [group('build')]
-image:
+build:
     ./build-local.sh aircastd
 
-# First time / base changed: clean rebuild of all stages + local aircastd
+# Same, but rebuild every stage: first run, or after the Debian base changed
 [group('build')]
-seed:
+build-clean:
     ./build-local.sh full aircastd
 
-# Fast stage3-only rebuild, reusing the already-injected aircastd binary
+# Image carrying the released aircastd from apt instead of your working copy
 [group('build')]
-fast:
-    ./build-local.sh fast
+build-from-apt:
+    ./build-local.sh fast s3
 
-# Release-equivalent local build: aircastd from apt, real provenance, xz output
+# Publishable image: apt aircastd, release provenance, xz — what CI would build
 [group('build')]
-image-prod VERSION AIRCASTD="":
+build-release VERSION AIRCASTD="":
     AIRCASTD_VERSION={{AIRCASTD}} ./build-local.sh prod {{VERSION}}
 
-# Publish the newest deploy/ image to the channel its version implies
+# Rebuild stage3 with whatever binaries are already staged
+[group('build')]
+rebuild:
+    ./build-local.sh fast
+
+# Rebuild every stage with whatever binaries are already staged
+[group('build')]
+rebuild-clean:
+    ./build-local.sh full
+
+# Upload the newest deploy/ image to the channel its version implies
 [group('release')]
 publish VERSION *ARGS:
     ./scripts/publish-local.sh {{VERSION}} {{ARGS}}
-
-# Full clean rebuild of every stage (S3 aircastd unless a binary is injected)
-[group('build')]
-full:
-    ./build-local.sh full
-
-# Drop the local aircastd binary; rebuild against the S3 apt repo instead
-[group('build')]
-s3:
-    ./build-local.sh fast s3
 
 # Start the apt-cacher-ng container (caches .deb downloads across builds)
 [group('cache')]
@@ -62,17 +66,17 @@ cache:
         docker run -d --name aircast-apt-cacher --restart=always -p 3142:3142 \
             -v aircast-apt-cache:/var/cache/apt-cacher-ng sameersbn/apt-cacher-ng
 
-# Remove the cached build container; the next build must re-seed via `just seed`
+# Remove the cached build container; the next build must rebuild every stage
 [group('cache')]
 reset:
     docker rm -v -f pigen_work >/dev/null 2>&1 || true
-    @echo "removed pigen_work — run 'just seed' before the next build"
+    @echo "removed pigen_work — the next build rebuilds every stage"
 
 # Show the newest built image in deploy/
 [group('image')]
 latest:
     @ls -t {{deploy_dir}}/*.img {{deploy_dir}}/*.img.xz 2>/dev/null | head -1 || \
-        echo "no image in {{deploy_dir}}/ — run 'just image'"
+        echo "no image in {{deploy_dir}}/ — run 'just build'"
 
 # Tags drive the delivery pipeline (.github/workflows/release.yml) and the tag
 # suffix picks the channel the image is published to and the aircastd apt
