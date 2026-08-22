@@ -7,27 +7,18 @@ permissions:
   repository-projects: write
 
 on:
-  # Triggered by aircast-agent releases
-  repository_dispatch:
-    types: [build-development-image, build-staging-image, build-testing-image, build-production-image]
+  # The image owns its own version line; `just release <type>` pushes the tag.
+  push:
+    tags:
+      - 'v*'
 
-  # Manual trigger for testing/emergency builds
+  # Rebuild an already-tagged image (emergency / changed aircastd pin)
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version (e.g., v1.0.0, v1.0.0-rc.1, v1.0.0-dev.1)'
+        description: 'Existing tag to rebuild (e.g. v1.0.0, v1.0.0-dev.1)'
         required: true
         type: string
-      distribution:
-        description: 'Distribution channel'
-        required: true
-        type: choice
-        options:
-          - stable
-          - testing
-          - staging
-          - development
-        default: stable
       aircastd_version:
         description: 'aircastd version to pin (empty = newest in the channel)'
         required: false
@@ -47,38 +38,34 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine version and distribution
         id: version
         run: |
-          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            # Triggered by an aircastd/aircast-agent release
-            VERSION="${{ github.event.client_payload.version }}"
-            AIRCASTD_VERSION="$VERSION"
-
-            # Determine distribution from event type
-            case "${{ github.event.action }}" in
-              "build-development-image")
-                DISTRIBUTION="development"
-                ;;
-              "build-staging-image")
-                DISTRIBUTION="staging"
-                ;;
-              "build-testing-image")
-                DISTRIBUTION="testing"
-                ;;
-              "build-production-image")
-                DISTRIBUTION="stable"
-                ;;
-            esac
-
-            echo "Triggered by: ${{ github.event.client_payload.trigger }}"
-            echo "Agent version: $VERSION"
-          else
-            # Manual dispatch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
-            DISTRIBUTION="${{ inputs.distribution }}"
             AIRCASTD_VERSION="${{ inputs.aircastd_version }}"
+            git rev-parse "refs/tags/$VERSION" >/dev/null 2>&1 || {
+              echo "[ERROR] Tag $VERSION does not exist. Cut it with \`just release <type>\`."
+              exit 1
+            }
+          else
+            VERSION="${{ github.ref_name }}"
+            AIRCASTD_VERSION=""
+          fi
+
+          # The tag suffix is the single source of truth for the channel, so the
+          # image can't be published to one channel while numbered for another.
+          if   [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]];   then DISTRIBUTION="development"
+          elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-stage\.[0-9]+$ ]]; then DISTRIBUTION="staging"
+          elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]];    then DISTRIBUTION="testing"
+          elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]];               then DISTRIBUTION="stable"
+          else
+            echo "[ERROR] Invalid tag format: $VERSION"
+            echo "Expected: v1.0.0, v1.0.0-rc.1, v1.0.0-stage.1, or v1.0.0-dev.1"
+            exit 1
           fi
 
           # Set environment based on distribution
@@ -120,7 +107,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
+          ref: ${{ needs.prepare.outputs.version }}
           fetch-depth: 0
 
       - name: Install dependencies
@@ -169,11 +156,14 @@ jobs:
           WPA_COUNTRY=GE
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
-          # Resolved for both trigger paths by the prepare job (workflow_dispatch
-          # inputs OR repository_dispatch payload). Exported so stage3 sees them:
-          # the apt channel to pull aircastd from, and the exact version to pin.
+          # Exported so stage3 sees them: the apt channel to pull aircastd from,
+          # the exact version to pin (empty = channel-latest), and the provenance
+          # baked into /etc/aircast-release.json.
           export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
           export AIRCASTD_VERSION='${{ needs.prepare.outputs.aircastd_version }}'
+          export IMAGE_VERSION='${{ needs.prepare.outputs.version }}'
+          export PI_GEN_REF='${{ needs.prepare.outputs.version }}'
+          export PI_GEN_COMMIT="$(git rev-parse --short HEAD)"
           EOF
 
           echo "Configuration created"
@@ -734,7 +724,7 @@ jobs:
 
           echo "## Raspberry Pi Image Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Trigger:** ${{ github.event_name == 'repository_dispatch' && 'Webhook from aircast-agent' || 'Manual Dispatch' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name == 'push' && 'Tag push' || 'Manual rebuild' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Distribution:** $DISTRIBUTION" >> $GITHUB_STEP_SUMMARY
           echo "**Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY

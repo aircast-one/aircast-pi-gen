@@ -64,6 +64,21 @@ latest:
     @ls -t {{deploy_dir}}/*.img.xz 2>/dev/null | head -1 || \
         echo "no image in {{deploy_dir}}/ — run 'just image'"
 
+# Tags drive the delivery pipeline (.github/workflows/release.yml) and the tag
+# suffix picks the channel the image is published to and the aircastd apt
+# channel it bakes:
+#   stable: v1.2.3   dev: v1.2.3-dev.N   stage: -stage.N   rc(testing): -rc.N
+
+# Create and push a release tag. TYPE: patch|minor|major|dev|stage|rc
+[group('release')]
+release TYPE:
+    ./scripts/release.sh {{TYPE}}
+
+# Check that release.sh picks the right next version (CI gate)
+[group('release')]
+test-release:
+    ./scripts/release_test.sh
+
 # Fail if a stage sub-script isn't named NN-run.sh / NN-run-chroot.sh (CI gate)
 [group('lint')]
 lint-stage-scripts:

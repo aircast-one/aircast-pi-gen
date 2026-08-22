@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'stage**'
+      - 'scripts/**'
       - 'justfile'
       - '.github/workflows/validate.yml'
   push:
     branches: [lite-arm64]
     paths:
       - 'stage**'
+      - 'scripts/**'
       - 'justfile'
       - '.github/workflows/validate.yml'
 
@@ -21,3 +23,5 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Lint stage script naming
         run: just lint-stage-scripts
+      - name: Test release versioning
+        run: just test-release

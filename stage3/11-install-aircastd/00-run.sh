@@ -65,7 +65,9 @@ echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRC
 # release to the same channel can't change what a rebuild bakes in. Map the
 # release tag to its Debian package version: drop the leading 'v' and turn '-'
 # into '~' (nfpm's pre-release convention, e.g. v0.0.1-dev.3 -> 0.0.1~dev.3).
-# Falls back to channel-latest when no version is provided (local builds).
+# Falls back to channel-latest when no version is provided, which is the normal
+# case: the image and aircastd have separate version lines, so a release only
+# pins aircastd when the build was asked to.
 if [ -n "${AIRCASTD_VERSION:-}" ]; then
 	deb_ver="${AIRCASTD_VERSION#v}"
 	# Escape the '~': bash tilde-expands an unescaped replacement string in
