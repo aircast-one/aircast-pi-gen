@@ -12,20 +12,25 @@ setup() {
     git init -q --bare "$WORK/origin.git"
     git init -q "$WORK/repo"
     cd "$WORK/repo"
+    git config user.email test@example.com
+    git config user.name test
+    git config tag.gpgSign false
+    git config tag.forceSignAnnotated false
+    git config commit.gpgSign false
     git remote add origin "$WORK/origin.git"
     cp "$SCRIPT_DIR/release.sh" .
     git add -A
-    git -c user.email=t@t -c user.name=t commit -qm init
+    git commit -qm init
     git push -q origin HEAD:master
 }
 
 tag_here() {
-    git -c tag.gpgSign=false -c tag.forceSignAnnotated=false tag -a "$1" -m "$1"
+    git tag -a "$1" -m "$1"
     git push -q origin "$1"
 }
 
 commit() {
-    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m "$1"
+    git commit -q --allow-empty -m "$1"
 }
 
 expect() {
