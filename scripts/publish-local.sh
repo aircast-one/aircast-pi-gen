@@ -53,9 +53,18 @@ sha256_of() {
 
 size_of() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
 
+# Publish exactly what `build-local.sh prod` stamped — never "newest file in
+# deploy/", which can be a later dev build with the wrong provenance baked in.
 DEPLOY_DIR="${DEPLOY_DIR:-deploy}"
-IMAGE_PATH=$(ls -t "${DEPLOY_DIR}"/*.img "${DEPLOY_DIR}"/*.img.xz "${DEPLOY_DIR}"/*.img.gz "${DEPLOY_DIR}"/*.zip 2>/dev/null | head -n 1 || true)
-[ -n "$IMAGE_PATH" ] || { echo "No image in ${DEPLOY_DIR}/ — run 'just build-release <version>' first" >&2; exit 1; }
+MARKER="${DEPLOY_DIR}/.publish-version"
+[ -f "$MARKER" ] || { echo "No ${MARKER} — run 'just build ${VERSION}' first" >&2; exit 1; }
+read -r BUILT_VERSION BUILT_IMAGE < "$MARKER"
+[ "$BUILT_VERSION" = "$VERSION" ] || {
+    echo "deploy/ holds a ${BUILT_VERSION} build, not ${VERSION} — rebuild with 'just build ${VERSION}'" >&2
+    exit 1
+}
+IMAGE_PATH="${DEPLOY_DIR}/${BUILT_IMAGE}"
+[ -f "$IMAGE_PATH" ] || { echo "${IMAGE_PATH} from ${MARKER} is gone — rebuild with 'just build ${VERSION}'" >&2; exit 1; }
 
 case "$IMAGE_PATH" in
     *.img.xz) EXT="img.xz" ;;
@@ -82,13 +91,14 @@ if [ "$DISTRIBUTION" = "stable" ] && [ "$ASSUME_YES" != "--yes" ]; then
     [ "$reply" = "$VERSION" ] || { echo "Aborted." >&2; exit 1; }
 fi
 
+REPUBLISH=""
 if aws s3api head-object --bucket "$BUCKET" --key "${DISTRIBUTION}/${URL_PATH}/${VERSION}/${ASSET}" >/dev/null 2>&1; then
     if [ -z "$FORCE" ]; then
         echo "Refusing to overwrite an already published ${VERSION}. Re-release with --force, or pick a new version." >&2
         exit 1
     fi
     echo "Replacing already published ${VERSION} (--force)"
-    aws s3 rm --recursive "${S3_PATH}/${VERSION}/"
+    REPUBLISH=1
 fi
 
 WORK=$(mktemp -d)
@@ -102,6 +112,13 @@ CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 aws s3 cp "${WORK}/${ASSET}"    "${S3_PATH}/${VERSION}/${ASSET}"
 aws s3 cp "${WORK}/${CHECKSUM}" "${S3_PATH}/${VERSION}/${CHECKSUM}"
+
+# On a --force re-release, sweep stale differently-named files only AFTER the
+# new ones are up: S3 object overwrite is atomic, so downloads never 404.
+if [ -n "$REPUBLISH" ]; then
+    aws s3 rm --recursive "${S3_PATH}/${VERSION}/" \
+        --exclude "$ASSET" --exclude "$CHECKSUM"
+fi
 
 REMOTE_SIZE=$(aws s3api head-object --bucket "$BUCKET" \
     --key "${DISTRIBUTION}/${URL_PATH}/${VERSION}/${ASSET}" \

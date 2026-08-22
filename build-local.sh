@@ -43,9 +43,7 @@ IMG_NAME="$( . ./config >/dev/null 2>&1; echo "${IMG_NAME}" )"
 CONTAINER=pigen_work
 SKIP_STAGES="stage0 stage1 stage2"
 AIRCASTD_SRC="${AIRCASTD_SRC:-../aircastd}"
-STREAMER_SRC="${STREAMER_SRC:-../aircast-streamer}"
 LOCAL_AIRCASTD="stage3/11-install-aircastd/files/aircastd"
-LOCAL_STREAMER="stage3/11-install-aircast-streamer/files/aircast-streamer"
 PROD_CONFIG="config-prod"
 BUILD_CONFIG="${BUILD_CONFIG:-}"
 
@@ -54,32 +52,24 @@ trap cleanup_skips EXIT
 
 # Start the host-side apt-cacher-ng container if it is not already running, so
 # .deb downloads are cached across builds (APT_PROXY in ./config points at it).
+# Same image pin as CI (.github/workflows/release.yml).
 ensure_apt_cache() {
 	if ! docker ps --filter name=aircast-apt-cacher -q | grep -q .; then
 		echo ">> starting apt-cacher-ng"
 		docker start aircast-apt-cacher >/dev/null 2>&1 || \
 			docker run -d --name aircast-apt-cacher --restart=always -p 3142:3142 \
-				-v aircast-apt-cache:/var/cache/apt-cacher-ng sameersbn/apt-cacher-ng >/dev/null
+				-v aircast-apt-cache:/var/cache/apt-cacher-ng \
+				sameersbn/apt-cacher-ng:3.7.4-20220421 >/dev/null
 	fi
 }
 
-# Cross-build the aircast daemons for the Pi and bake the binaries into their
-# stage3 stages, so the image uses the local builds instead of pulling
-# published releases from S3. Each repo builds independently via its own
-# justfile (they deploy separately too); the pair is injected together here
-# only because a local image build wants both of them current.
+# Cross-build aircastd for the Pi and bake the binary into its stage3 stage, so
+# the image uses the local build instead of pulling a published release from S3.
 build_and_inject_aircastd() {
-	# Build ALL binaries before injecting ANY: a failed build must not leave
-	# a partially-injected set (e.g. a local aircastd silently paired with a
-	# channel-latest streamer from apt on the next build).
 	echo ">> building aircastd from ${AIRCASTD_SRC} (just build-pi)"
 	( cd "${AIRCASTD_SRC}" && just build-pi )
-	echo ">> building aircast-streamer from ${STREAMER_SRC} (just build-pi)"
-	( cd "${STREAMER_SRC}" && just build-pi )
-
 	install -m 755 "${AIRCASTD_SRC}/dist/aircastd-linux-arm64" "${LOCAL_AIRCASTD}"
-	install -m 755 "${STREAMER_SRC}/dist/aircast-streamer-linux-arm64" "${LOCAL_STREAMER}"
-	echo ">> injected ${LOCAL_AIRCASTD} + ${LOCAL_STREAMER}"
+	echo ">> injected ${LOCAL_AIRCASTD}"
 }
 
 # Clean build of every stage. Drops any cached container and rebuilds from
@@ -139,7 +129,7 @@ build_prod() {
 		*-stage.*) channel=staging ;;
 		*-rc.*)    channel=testing ;;
 	esac
-	rm -f "${LOCAL_AIRCASTD}" "${LOCAL_STREAMER}"
+	rm -f "${LOCAL_AIRCASTD}"
 	grep -vE '^(export )?(DEPLOY_COMPRESSION|AIRCAST_DISTRIBUTION|AIRCASTD_VERSION|IMAGE_VERSION|PI_GEN_REF|PI_GEN_COMMIT)=' config > "$PROD_CONFIG"
 	{
 		echo "DEPLOY_COMPRESSION=xz"
@@ -151,9 +141,20 @@ build_prod() {
 	} >> "$PROD_CONFIG"
 	echo ">> PROD build ${version} (channel ${channel}, aircastd ${AIRCASTD_VERSION:-channel-latest})"
 	BUILD_CONFIG="$PROD_CONFIG" build_fast
+
+	# Stamp what was just built so publish-local.sh ships exactly this image —
+	# never "newest file in deploy/", which can be a later dev build.
+	local img
+	img=$(ls -t deploy/*.img.xz deploy/*.img 2>/dev/null | head -1)
+	[ -n "$img" ] || { echo "!! prod build produced no image in deploy/" >&2; exit 1; }
+	printf '%s %s\n' "$version" "$(basename "$img")" > deploy/.publish-version
+	echo ">> stamped deploy/.publish-version: ${version} $(basename "$img")"
 }
 
-case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
+case "${1:-}" in
+	-h|--help|help) usage; exit 0 ;;
+	cache)          ensure_apt_cache; exit 0 ;;
+esac
 
 if [ "${1:-}" = "prod" ]; then
 	build_prod "${2:-}"
@@ -168,7 +169,7 @@ if [ "${MODE}" = "aircastd" ]; then MODE=fast; SOURCE=aircastd; fi
 
 case "${SOURCE}" in
 	aircastd) build_and_inject_aircastd ;;
-	s3)       echo ">> reverting to S3 binaries (removing ${LOCAL_AIRCASTD} + ${LOCAL_STREAMER}; the streamer stage skips channels with no published release)"; rm -f "${LOCAL_AIRCASTD}" "${LOCAL_STREAMER}" ;;
+	s3)       echo ">> reverting to the S3 binary (removing ${LOCAL_AIRCASTD})"; rm -f "${LOCAL_AIRCASTD}" ;;
 	"")       : ;;
 	*)        echo "unknown aircastd source: ${SOURCE}" >&2; usage; exit 1 ;;
 esac
