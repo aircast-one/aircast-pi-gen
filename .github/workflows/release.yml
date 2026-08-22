@@ -149,9 +149,28 @@ jobs:
           driver: docker
           install: true
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
       - name: Ensure apt-cacher-ng proxy
         id: apt-proxy
         run: |
+          # A fresh runner box has no apt cache volume yet: seed it from the
+          # S3 copy so the first build there still hits the package cache.
+          if ! docker volume inspect apt-cacher-ng-cache >/dev/null 2>&1; then
+            if aws s3 cp s3://aircast-artifacts/pi-gen-cache/apt-cacher-ng.tar.zst apt-cache.tar.zst --no-progress 2>/dev/null; then
+              docker volume create apt-cacher-ng-cache
+              MP=$(docker volume inspect -f '{{.Mountpoint}}' apt-cacher-ng-cache)
+              sudo tar -I zstd -xf apt-cache.tar.zst -C "$MP"
+              rm -f apt-cache.tar.zst
+              echo "Seeded apt cache volume from S3"
+            fi
+          fi
+
           docker start apt-cacher-ng 2>/dev/null || \
             docker run -d --name apt-cacher-ng --restart unless-stopped \
               -p 3142:3142 -v apt-cacher-ng-cache:/var/cache/apt-cacher-ng \
@@ -202,13 +221,6 @@ jobs:
           EOF
 
           echo "Configuration created"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
 
       - name: Restore base cache from S3 (stages 0-2)
         id: cache-setup
@@ -297,6 +309,23 @@ jobs:
           aws s3 cp cache.tar.zst "$CACHE_OBJ" --no-progress
           rm -f cache.tar.zst
           echo "Base cache uploaded - subsequent builds on any runner will skip stages 0-2."
+
+      - name: Save apt cache to S3
+        # Best-effort: a failed cache upload must never fail a release.
+        if: success() && steps.apt-proxy.outputs.url != ''
+        continue-on-error: true
+        run: |
+          MP=$(docker volume inspect -f '{{.Mountpoint}}' apt-cacher-ng-cache)
+          # zstd -1: the cached .debs are already compressed, higher levels
+          # only burn CPU. --warning=no-file-changed because apt-cacher-ng
+          # stays running while we archive; its exit 1 for changed files is
+          # tolerated, anything worse aborts (and is swallowed by
+          # continue-on-error above).
+          sudo tar -I 'zstd -T0 -1' --warning=no-file-changed \
+            -cf apt-cache.tar.zst -C "$MP" . || [ $? -eq 1 ]
+          echo "apt cache archive: $(du -sh apt-cache.tar.zst | cut -f1)"
+          aws s3 cp apt-cache.tar.zst s3://aircast-artifacts/pi-gen-cache/apt-cacher-ng.tar.zst --no-progress
+          rm -f apt-cache.tar.zst
 
       - name: Build Statistics
         if: always()
