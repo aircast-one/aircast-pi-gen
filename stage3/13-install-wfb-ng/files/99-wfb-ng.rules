@@ -1,0 +1,4 @@
+# Start the drone profile when a wfb-capable adapter appears, rather than
+# enabling the unit outright. Most devices have no radio, and a unit that is
+# enabled everywhere just fails on every boot of every one of them.
+SUBSYSTEM=="net", ACTION=="add", ENV{ID_NET_DRIVER}=="rtl88xxau_wfb", TAG+="systemd", ENV{SYSTEMD_WANTS}="wifibroadcast@drone.service"
