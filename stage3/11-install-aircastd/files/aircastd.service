@@ -1,5 +1,5 @@
 [Unit]
-Description=aircastd device control plane (HTTP :80, manages mediamtx + mavp2p)
+Description=aircastd device control plane (HTTP :80, manages mediamtx + in-process MAVLink router)
 After=network-online.target tailscaled.service cloud-final.service
 Wants=network-online.target
 # Crash-loop protection: allow 20 restarts per 5 minutes.
@@ -7,7 +7,7 @@ StartLimitIntervalSec=300
 StartLimitBurst=20
 
 [Service]
-# aircastd binds port 80 and calls systemctl to manage mediamtx/mavp2p, so it
+# aircastd binds port 80 and calls systemctl to manage mediamtx, so it
 # runs as root.
 User=root
 Group=root

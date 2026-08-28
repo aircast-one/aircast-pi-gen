@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 # aircastd: device control plane. Serves the landing/status page on port 80 and
-# manages the mediamtx and mavp2p systemd units. It replaces the old lighttpd
+# manages the mediamtx systemd unit. It replaces the old lighttpd
 # welcome page (see removed stage 09-welcome-page).
 #
 # Two install paths:
