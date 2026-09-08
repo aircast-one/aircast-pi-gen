@@ -95,6 +95,13 @@ jobs:
   build:
     needs: prepare
     runs-on: [self-hosted, Linux]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://cb3f7d95c2d311b22c4e57e0759d3a13.r2.cloudflarestorage.com
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+
     environment: ${{ needs.prepare.outputs.environment }}
     outputs:
       # Versioned artifact name incl. its compression extension (e.g. .img.xz),
@@ -131,25 +138,18 @@ jobs:
         with:
           platforms: arm64
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
       - name: Ensure apt-cacher-ng proxy
         id: apt-proxy
         run: |
           # A fresh runner box has no apt cache volume yet: seed it from the
-          # S3 copy so the first build there still hits the package cache.
+          # R2 copy so the first build there still hits the package cache.
           if ! docker volume inspect apt-cacher-ng-cache >/dev/null 2>&1; then
-            if aws s3 cp s3://aircast-artifacts/pi-gen-cache/apt-cacher-ng.tar.zst apt-cache.tar.zst --no-progress 2>/dev/null; then
+            if aws s3 cp s3://aircast-ci-cache/pi-gen-cache/apt-cacher-ng.tar.zst apt-cache.tar.zst --no-progress 2>/dev/null; then
               docker volume create apt-cacher-ng-cache
               MP=$(docker volume inspect -f '{{.Mountpoint}}' apt-cacher-ng-cache)
               sudo tar -I zstd -xf apt-cache.tar.zst -C "$MP"
               rm -f apt-cache.tar.zst
-              echo "Seeded apt cache volume from S3"
+              echo "Seeded apt cache volume from R2"
             fi
           fi
 
@@ -204,7 +204,7 @@ jobs:
 
           echo "Configuration created"
 
-      - name: Restore base cache from S3 (stages 0-2)
+      - name: Restore base cache from R2 (stages 0-2)
         id: cache-setup
         env:
           # Bump to force a fresh base bake fleet-wide without touching stage files.
@@ -227,7 +227,7 @@ jobs:
             echo "RELEASE=trixie"
             echo "CACHE_VERSION=${CACHE_VERSION}"
           } | LC_ALL=C sort | sha256sum | cut -c1-32 )
-          CACHE_OBJ="s3://aircast-artifacts/pi-gen-cache/${{ env.IMG_NAME }}/${CACHE_KEY}.tar.zst"
+          CACHE_OBJ="s3://aircast-ci-cache/pi-gen-cache/${{ env.IMG_NAME }}/${CACHE_KEY}.tar.zst"
           echo "cache_obj=$CACHE_OBJ" >> "$GITHUB_OUTPUT"
           echo "Base cache key: $CACHE_KEY"
           echo "Base cache object: $CACHE_OBJ"
@@ -266,7 +266,7 @@ jobs:
 
           echo "Build completed successfully!"
 
-      - name: Save base cache to S3 (stages 0-2)
+      - name: Save base cache to R2 (stages 0-2)
         # Only on a miss: a hit reused the identical, already-uploaded base, so
         # stages 0-2 are byte-for-byte the cached ones and re-uploading is wasted work.
         if: success() && steps.cache-setup.outputs.cache_hit == 'false'
@@ -292,7 +292,7 @@ jobs:
           rm -f cache.tar.zst
           echo "Base cache uploaded - subsequent builds on any runner will skip stages 0-2."
 
-      - name: Save apt cache to S3
+      - name: Save apt cache to R2
         # Best-effort: a failed cache upload must never fail a release.
         if: success() && steps.apt-proxy.outputs.url != ''
         continue-on-error: true
@@ -306,7 +306,7 @@ jobs:
           sudo tar -I 'zstd -T0 -1' --warning=no-file-changed \
             -cf apt-cache.tar.zst -C "$MP" . || [ $? -eq 1 ]
           echo "apt cache archive: $(du -sh apt-cache.tar.zst | cut -f1)"
-          aws s3 cp apt-cache.tar.zst s3://aircast-artifacts/pi-gen-cache/apt-cacher-ng.tar.zst --no-progress
+          aws s3 cp apt-cache.tar.zst s3://aircast-ci-cache/pi-gen-cache/apt-cacher-ng.tar.zst --no-progress
           rm -f apt-cache.tar.zst
 
       - name: Build Statistics
@@ -317,10 +317,10 @@ jobs:
 
           # Check cache hit rate and estimate time savings
           if [ "${{ steps.cache-setup.outputs.cache_hit }}" == "true" ]; then
-            echo "Build type: INCREMENTAL (S3 base cache hit; stages 0-2 reused)"
+            echo "Build type: INCREMENTAL (R2 base cache hit; stages 0-2 reused)"
             echo "Estimated time saved: ~30-40 minutes"
           else
-            echo "Build type: FULL (base cache miss; stages 0-2 uploaded to S3)"
+            echo "Build type: FULL (base cache miss; stages 0-2 uploaded to R2)"
           fi
 
           # Show stage sizes (pi-gen uses work/IMG_NAME/stage* structure)
@@ -395,10 +395,10 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up build artifacts to free disk space..."
-          echo "Note: the incremental base cache lives in S3, so work/ is safe to remove"
+          echo "Note: the incremental base cache lives in R2, so work/ is safe to remove"
 
           # Remove pi-gen work directory (9GB+). The base stages were already
-          # archived to S3 by the "Save base cache" step; this is just scratch.
+          # archived to R2 by the "Save base cache" step; this is just scratch.
           if [ -d "work" ]; then
             echo "Removing work directory..."
             sudo rm -rf work/
@@ -491,15 +491,14 @@ jobs:
     needs: [prepare, build, release]
     if: needs.release.result == 'success'
     runs-on: [self-hosted, Linux]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://cb3f7d95c2d311b22c4e57e0759d3a13.r2.cloudflarestorage.com
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
       - name: Wait for GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -550,16 +549,16 @@ jobs:
             --pattern "${{ needs.build.outputs.image_name }}" \
             --pattern "${{ needs.build.outputs.image_name }}.sha256"
 
-          # Upload to S3 (use distribution-based path)
-          S3_PATH="s3://aircast-artifacts/$DISTRIBUTION/lite"
-          echo "Uploading to S3 ($S3_PATH)..."
+          # Upload to R2 (one bucket per channel)
+          S3_PATH="s3://aircast-artifacts-$DISTRIBUTION/lite"
+          echo "Uploading to R2 ($S3_PATH)..."
 
-          # Determine CloudFront domain based on distribution
-          # Each CloudFront distribution has OriginPath set to its distribution folder,
+          # Determine downloads domain based on distribution
+          # Each channel is its own R2 bucket served at the domain root,
           # so URLs don't include the distribution in the path
           case "$DISTRIBUTION" in
             "development")
-              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              DOWNLOADS_DOMAIN="downloads-dev.aircast.one"
               ;;
             "staging")
               DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
@@ -585,7 +584,7 @@ jobs:
               fi
 
               # Verify upload by checking file exists and size matches
-              REMOTE_SIZE=$(aws s3api head-object --bucket aircast-artifacts --key "$DISTRIBUTION/lite/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
+              REMOTE_SIZE=$(aws s3api head-object --bucket "aircast-artifacts-$DISTRIBUTION" --key "lite/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
               if [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
                 echo "[ERROR] Size mismatch for $file: local=$LOCAL_SIZE, remote=$REMOTE_SIZE"
                 UPLOAD_FAILED=true
@@ -641,10 +640,10 @@ jobs:
 
           echo "Image: $MAIN_IMAGE (extension: $IMAGE_EXTENSION, size: $IMAGE_SIZE)"
 
-          # Fetch existing releases.json from S3 directly (bypass CDN cache)
-          S3_KEY="$DISTRIBUTION/lite/releases.json"
+          # Fetch existing releases.json from R2 directly (bypass CDN cache)
+          S3_KEY="lite/releases.json"
 
-          if aws s3 cp "s3://aircast-artifacts/$S3_KEY" existing-releases.json 2>/dev/null; then
+          if aws s3 cp "s3://aircast-artifacts-$DISTRIBUTION/$S3_KEY" existing-releases.json 2>/dev/null; then
             echo "Found existing releases.json"
           else
             echo "No existing releases.json, creating new"
@@ -674,10 +673,18 @@ jobs:
               }
             }' > new-release.json
 
-          # Prepend new release and remove duplicate if exists (re-release scenario)
-          jq --slurpfile new new-release.json \
-            '.releases = [$new[0]] + [.releases[] | select(.version != $new[0].version)]' \
-            existing-releases.json > releases.json
+          jq --slurpfile new new-release.json '
+            def semver_key:
+              (.version | ltrimstr("v") | split("-")) as $parts
+              | ($parts[0] | split(".") | map(tonumber)) as $core
+              | (if ($parts | length) > 1
+                 then [0, ($parts[1:] | join("-") | split(".") | map(tonumber? // .))]
+                 else [1, []] end) as $pre
+              | [$core[0], $core[1], $core[2], $pre[0], $pre[1]];
+            .releases = ([$new[0]] + [.releases[] | select(.version != $new[0].version)]
+                         | sort_by(semver_key)
+                         | reverse)
+          ' existing-releases.json > releases.json
 
           echo "Updated releases.json with $VERSION (total: $(jq '.releases | length' releases.json) releases)"
 
@@ -691,7 +698,7 @@ jobs:
             fi
 
             # Verify upload succeeded by checking the file exists
-            if aws s3api head-object --bucket aircast-artifacts --key "$S3_KEY" > /dev/null 2>&1; then
+            if aws s3api head-object --bucket "aircast-artifacts-$DISTRIBUTION" --key "$S3_KEY" > /dev/null 2>&1; then
               echo "[OK] releases.json uploaded successfully"
               break
             fi
@@ -713,53 +720,6 @@ jobs:
           cd ..
           rm -rf temp-assets
 
-      - name: Invalidate CloudFront cache
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
-          echo "Invalidating CloudFront cache..."
-
-          # Determine CloudFront domain based on distribution
-          case "$DISTRIBUTION" in
-            "development")
-              CF_DOMAIN="downloads.dev.aircast.one"
-              ;;
-            "staging")
-              CF_DOMAIN="downloads.stage.aircast.one"
-              ;;
-            *)
-              CF_DOMAIN="downloads.aircast.one"
-              ;;
-          esac
-          URL_PATH="lite"
-
-          # Find CloudFront distribution
-          CF_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(Aliases.Items, '$CF_DOMAIN')].Id" \
-            --output text)
-
-          if [ -z "$CF_DISTRIBUTION_ID" ]; then
-            echo "[WARN] Could not find CloudFront distribution for $CF_DOMAIN"
-          else
-            echo "Found CloudFront distribution: $CF_DISTRIBUTION_ID"
-
-            # Create invalidation for releases.json and version-specific files
-            INVALIDATION_ID=$(aws cloudfront create-invalidation \
-              --distribution-id $CF_DISTRIBUTION_ID \
-              --paths "/$URL_PATH/releases.json" "/$URL_PATH/$VERSION/*" \
-              --query 'Invalidation.Id' \
-              --output text)
-
-            echo "Created invalidation: $INVALIDATION_ID"
-
-            # Wait for invalidation to complete (with timeout)
-            echo "Waiting for CloudFront invalidation to complete..."
-            timeout 300 aws cloudfront wait invalidation-completed \
-              --distribution-id $CF_DISTRIBUTION_ID \
-              --id $INVALIDATION_ID || echo "[WARN] Invalidation is taking longer than expected"
-
-            echo "[OK] CloudFront cache invalidated!"
-          fi
 
   notify:
     needs: [prepare, build, release, mirror-to-s3]
@@ -782,13 +742,13 @@ jobs:
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
           echo "- **Image Build:** ${{ needs.build.result == 'success' && 'Success' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **GitHub Release:** ${{ needs.release.result == 'success' && 'Success' || needs.release.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **S3 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **R2 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Determine downloads domain based on distribution
           case "$DISTRIBUTION" in
             "development")
-              DOWNLOADS_DOMAIN="downloads.dev.aircast.one"
+              DOWNLOADS_DOMAIN="downloads-dev.aircast.one"
               ;;
             "staging")
               DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
@@ -803,7 +763,7 @@ jobs:
             echo "### Release Published" >> $GITHUB_STEP_SUMMARY
             echo "- **GitHub Release:** https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ needs.mirror-to-s3.result }}" == "success" ]; then
-              echo "- **S3 Mirror:** https://$DOWNLOADS_DOMAIN/$URL_PATH/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+              echo "- **R2 Mirror:** https://$DOWNLOADS_DOMAIN/$URL_PATH/${{ needs.prepare.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
               echo "- **Releases:** https://$DOWNLOADS_DOMAIN/$URL_PATH/releases.json" >> $GITHUB_STEP_SUMMARY
             fi
           else
@@ -825,7 +785,7 @@ jobs:
 
           *Version:* \`${VERSION}\`
           *Channel:* ${DISTRIBUTION}
-          *S3 Mirror:* ${MIRROR}"
+          *R2 Mirror:* ${MIRROR}"
           else
             MESSAGE="❌ *Pi Image Build Failed*
 

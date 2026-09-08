@@ -8,7 +8,7 @@
 #   * Local dev — if files/aircastd (a locally-built arm64 binary, gitignored)
 #     is present, bake it straight in with the shipped unit. Lets you test an
 #     uncommitted aircastd without publishing a release; see build-local.sh.
-#   * Default — install from the shared, public aircast-apt S3 repository under
+#   * Default — install from the shared, public aircast-apt R2 repository under
 #     the "aircastd" prefix (the same repo aircast.one/install.sh uses on real
 #     devices), so CI and clean builds need no auth to the private
 #     aircast-one/aircastd GitHub repo. The .deb carries the binary AND the unit
@@ -49,8 +49,8 @@ EOF
 fi
 
 AIRCAST_DISTRIBUTION="${AIRCAST_DISTRIBUTION:-development}"
-AIRCAST_APT_KEY_URL="https://aircast-apt.s3.us-east-1.amazonaws.com/public-key.gpg"
-AIRCAST_APT_BASE="https://aircast-apt.s3.us-east-1.amazonaws.com/aircastd"
+AIRCAST_APT_KEY_URL="https://apt.aircast.one/public-key.gpg"
+AIRCAST_APT_BASE="https://apt.aircast.one/aircastd"
 
 # Signing key (ASCII-armored) -> dearmored rootfs keyring. Host-side curl so we
 # get the retry behaviour; gpg is provided by the pi-gen build image.

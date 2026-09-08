@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUCKET="aircast-artifacts"
 URL_PATH="lite"
+
+export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-https://cb3f7d95c2d311b22c4e57e0759d3a13.r2.cloudflarestorage.com}"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
+export AWS_REQUEST_CHECKSUM_CALCULATION="${AWS_REQUEST_CHECKSUM_CALCULATION:-when_required}"
 
 channel_for_version() {
     case "$1" in
-        *-dev.*)   echo "development downloads.dev.aircast.one" ;;
+        *-dev.*)   echo "development downloads-dev.aircast.one" ;;
         *-stage.*) echo "staging downloads.stage.aircast.one" ;;
         *-rc.*)    echo "testing downloads.aircast.one" ;;
         *)         echo "stable downloads.aircast.one" ;;
@@ -42,7 +45,8 @@ valid_version "$VERSION" || {
 }
 
 read -r DISTRIBUTION DOWNLOADS_DOMAIN <<< "$(channel_for_version "$VERSION")"
-S3_PATH="s3://${BUCKET}/${DISTRIBUTION}/${URL_PATH}"
+BUCKET="aircast-artifacts-${DISTRIBUTION}"
+S3_PATH="s3://${BUCKET}/${URL_PATH}"
 
 command -v aws >/dev/null || { echo "aws CLI not found" >&2; exit 1; }
 command -v jq  >/dev/null || { echo "jq not found" >&2; exit 1; }
@@ -92,7 +96,7 @@ if [ "$DISTRIBUTION" = "stable" ] && [ "$ASSUME_YES" != "--yes" ]; then
 fi
 
 REPUBLISH=""
-if aws s3api head-object --bucket "$BUCKET" --key "${DISTRIBUTION}/${URL_PATH}/${VERSION}/${ASSET}" >/dev/null 2>&1; then
+if aws s3api head-object --bucket "$BUCKET" --key "${URL_PATH}/${VERSION}/${ASSET}" >/dev/null 2>&1; then
     if [ -z "$FORCE" ]; then
         echo "Refusing to overwrite an already published ${VERSION}. Re-release with --force, or pick a new version." >&2
         exit 1
@@ -146,7 +150,7 @@ if [ -n "$REPUBLISH" ]; then
 fi
 
 REMOTE_SIZE=$(aws s3api head-object --bucket "$BUCKET" \
-    --key "${DISTRIBUTION}/${URL_PATH}/${VERSION}/${ASSET}" \
+    --key "${URL_PATH}/${VERSION}/${ASSET}" \
     --query 'ContentLength' --output text)
 [ "$REMOTE_SIZE" = "$IMAGE_SIZE" ] || {
     echo "Upload size mismatch: local ${IMAGE_SIZE}, remote ${REMOTE_SIZE}" >&2
@@ -177,20 +181,6 @@ jq --slurpfile new "${WORK}/new.json" \
 
 aws s3 cp "${WORK}/releases.json" "${S3_PATH}/releases.json"
 
-CF_ID=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?contains(Aliases.Items, '${DOWNLOADS_DOMAIN}')].Id" \
-    --output text)
-
-if [ -z "$CF_ID" ] || [ "$CF_ID" = "None" ]; then
-    echo "No CloudFront distribution for ${DOWNLOADS_DOMAIN}; skipping invalidation" >&2
-else
-    INVALIDATION=$(aws cloudfront create-invalidation --distribution-id "$CF_ID" \
-        --paths "/${URL_PATH}/releases.json" "/${URL_PATH}/${VERSION}/*" \
-        --query 'Invalidation.Id' --output text)
-    timeout 300 aws cloudfront wait invalidation-completed \
-        --distribution-id "$CF_ID" --id "$INVALIDATION" \
-        || echo "Invalidation still pending: $INVALIDATION" >&2
-fi
 
 echo "Published ${VERSION} to ${DISTRIBUTION}"
 echo "https://${DOWNLOADS_DOMAIN}/${URL_PATH}/${VERSION}/${ASSET}"

@@ -34,7 +34,7 @@ Base mode (first arg, default: fast):
 aircastd source (second arg, optional):
   aircastd   Build aircastd from ../aircastd (just build-pi) and bake the local
              binary in — test uncommitted aircastd without a release.
-  s3         Drop the local binary; install from the aircast-apt S3 repo.
+  s3         Drop the local binary; install from the aircast-apt R2 repo.
   (omitted)  Leave whatever is currently injected as-is.
 EOF
 }

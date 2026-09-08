@@ -6,7 +6,7 @@
 # On Apple Silicon the image builds NATIVELY (arm64 host + arm64 Docker), so
 # there is no QEMU emulation penalty. Speedups baked in: stage3-only rebuilds
 # reuse the cached stage0-2 base (pigen_work), apt-cacher-ng caches .deb
-# downloads, and a locally-built aircastd is baked in instead of pulled from S3.
+# downloads, and a locally-built aircastd is baked in instead of pulled from R2.
 #
 # Testing a change:  just build
 # Shipping:          just build v1.2.3 v0.3.4  &&  just publish v1.2.3
