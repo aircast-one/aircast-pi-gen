@@ -41,6 +41,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       environment: ${{ steps.version.outputs.environment }}
       aircastd_version: ${{ steps.version.outputs.aircastd_version }}
     steps:
@@ -69,12 +70,17 @@ jobs:
           if   [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]];   then DISTRIBUTION="development"
           elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-stage\.[0-9]+$ ]]; then DISTRIBUTION="staging"
           elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]];    then DISTRIBUTION="testing"
+          elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]];  then DISTRIBUTION="stable"
           elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]];               then DISTRIBUTION="stable"
           else
             echo "[ERROR] Invalid tag format: $VERSION"
-            echo "Expected: v1.0.0, v1.0.0-rc.1, v1.0.0-stage.1, or v1.0.0-dev.1"
+            echo "Expected: v1.0.0, v1.0.0-beta.1, v1.0.0-rc.1, v1.0.0-stage.1, or v1.0.0-dev.1"
             exit 1
           fi
+
+          # A beta is a stable-channel image (same apt channel, credentials and
+          # bucket) that the flasher lists but never picks by default.
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then PRERELEASE=false; else PRERELEASE=true; fi
 
           # Set environment based on distribution
           case "$DISTRIBUTION" in
@@ -88,6 +94,7 @@ jobs:
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "aircastd_version=$AIRCASTD_VERSION" >> $GITHUB_OUTPUT
           echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT)"
@@ -464,7 +471,7 @@ jobs:
           body: |
             ## Aircast Raspberry Pi Image
 
-            **Channel:** ${{ needs.prepare.outputs.distribution }}
+            **Channel:** ${{ needs.prepare.outputs.distribution }}${{ contains(needs.prepare.outputs.version, '-beta.') && ' (beta)' || '' }}
 
             ### Installation
             1. Download the image file
@@ -481,7 +488,7 @@ jobs:
             ### Checksums
             SHA256 checksums are provided for verification.
           draft: false
-          prerelease: ${{ needs.prepare.outputs.distribution != 'stable' }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           files: |
             release-assets/${{ needs.build.outputs.image_name }}
@@ -653,7 +660,7 @@ jobs:
           # Create new release entry using jq (no heredoc indentation issues)
           jq -n \
             --arg version "$VERSION" \
-            --argjson prerelease "${{ needs.prepare.outputs.distribution != 'stable' }}" \
+            --argjson prerelease "${{ needs.prepare.outputs.prerelease == 'true' }}" \
             --arg created_at "$CREATED_AT" \
             --arg filename "$MAIN_IMAGE" \
             --arg extension "$IMAGE_EXTENSION" \

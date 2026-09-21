@@ -12,12 +12,13 @@ channel_for_version() {
         *-dev.*)   echo "development downloads-dev.aircast.one" ;;
         *-stage.*) echo "staging downloads.stage.aircast.one" ;;
         *-rc.*)    echo "testing downloads.aircast.one" ;;
+        *-beta.*)  echo "stable downloads.aircast.one" ;;
         *)         echo "stable downloads.aircast.one" ;;
     esac
 }
 
 valid_version() {
-    [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(dev|stage|rc)\.[0-9]+)?$ ]]
+    [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(dev|stage|rc|beta)\.[0-9]+)?$ ]]
 }
 
 if [ "${1:-}" = "--print-channel" ]; then
@@ -26,7 +27,7 @@ if [ "${1:-}" = "--print-channel" ]; then
     exit 0
 fi
 
-VERSION="${1:?Usage: $0 <vX.Y.Z[-dev.N|-stage.N|-rc.N]> [--yes] [--force]}"
+VERSION="${1:?Usage: $0 <vX.Y.Z[-dev.N|-stage.N|-rc.N|-beta.N]> [--yes] [--force]}"
 shift
 ASSUME_YES=""
 FORCE=""
@@ -40,7 +41,7 @@ done
 
 valid_version "$VERSION" || {
     echo "Invalid version: $VERSION" >&2
-    echo "Expected vX.Y.Z, or vX.Y.Z with -dev.N / -stage.N / -rc.N" >&2
+    echo "Expected vX.Y.Z, or vX.Y.Z with -dev.N / -stage.N / -rc.N / -beta.N" >&2
     exit 1
 }
 
@@ -56,6 +57,15 @@ sha256_of() {
 }
 
 size_of() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+
+# shellcheck disable=SC2016
+SEMVER_KEY='def semver_key:
+    split("-") as $parts
+    | ($parts[0] | split(".") | map(tonumber)) as $core
+    | (if ($parts | length) > 1
+       then [0, ($parts[1:] | join("-") | split(".") | map(tonumber? // .))]
+       else [1, []] end) as $pre
+    | [$core[0], $core[1], $core[2], $pre[0], $pre[1]];'
 
 # Publish exactly what `build-local.sh prod` stamped — never "newest file in
 # deploy/", which can be a later dev build with the wrong provenance baked in.
@@ -118,14 +128,13 @@ if [ -z "$REPUBLISH" ]; then
     BARE="${VERSION#v}"
     LINE="${BARE%%-*}"
     LINE="${LINE%.*}"
-    HIGHEST=$(jq -r --arg line "${LINE}." \
-        '[.releases[].version | ltrimstr("v") | select(startswith($line))]
-         | sort_by([splits("[.-]")] | map(tonumber? // .)) | last // empty' \
+    HIGHEST=$(jq -r --arg line "${LINE}." "${SEMVER_KEY}"'
+        [.releases[].version | ltrimstr("v") | select(startswith($line))]
+         | sort_by(semver_key) | last // empty' \
         "${WORK}/existing.json")
     if [ -n "$HIGHEST" ]; then
-        NEWER=$(jq -rn --arg a "$HIGHEST" --arg b "$BARE" \
-            'def key: [splits("[.-]")] | map(tonumber? // .);
-             ($a | key) < ($b | key)')
+        NEWER=$(jq -rn --arg a "$HIGHEST" --arg b "$BARE" "${SEMVER_KEY}"'
+             ($a | semver_key) < ($b | semver_key)')
         if [ "$NEWER" != "true" ]; then
             echo "Refusing to publish ${VERSION}: the ${LINE} line is already at ${HIGHEST}. Only a higher ${LINE}.x may be published." >&2
             exit 1
@@ -159,7 +168,7 @@ REMOTE_SIZE=$(aws s3api head-object --bucket "$BUCKET" \
 
 jq -n \
     --arg version "$VERSION" \
-    --argjson prerelease "$([ "$DISTRIBUTION" = stable ] && echo false || echo true)" \
+    --argjson prerelease "$([[ "$VERSION" == *-* ]] && echo true || echo false)" \
     --arg created_at "$CREATED_AT" \
     --arg filename "$ASSET" \
     --arg extension "$EXT" \
@@ -173,10 +182,9 @@ jq -n \
 
 # Highest version first, whatever order things were published in: a hotfix on
 # an old line lands in its right place instead of becoming "latest".
-jq --slurpfile new "${WORK}/new.json" \
-    'def key: .version | ltrimstr("v") | [splits("[.-]")] | map(tonumber? // .);
+jq --slurpfile new "${WORK}/new.json" "${SEMVER_KEY}"'
      .releases = ([$new[0]] + [.releases[] | select(.version != $new[0].version)]
-                  | sort_by(key) | reverse)' \
+                  | sort_by(.version | ltrimstr("v") | semver_key) | reverse)' \
     "${WORK}/existing.json" > "${WORK}/releases.json"
 
 aws s3 cp "${WORK}/releases.json" "${S3_PATH}/releases.json"

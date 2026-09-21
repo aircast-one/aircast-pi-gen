@@ -75,6 +75,14 @@ expect stage v0.3.2-stage.5
 setup
 tag_here v0.3.2
 expect rc v0.3.3-rc.1
+setup
+tag_here v0.3.2
+expect beta v0.3.3-beta.1
+setup
+tag_here v0.3.2
+tag_here v0.3.3-beta.2
+expect beta v0.3.3-beta.3
+expect patch v0.3.3
 
 echo "an existing tag is refused, never silently reused"
 setup

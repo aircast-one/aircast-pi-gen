@@ -12,7 +12,7 @@ set -euo pipefail
 #   ./scripts/release.sh <patch|minor|major|dev|stage|rc>
 # =============================================================================
 
-TYPE="${1:?Usage: $0 <patch|minor|major|dev|stage|rc>}"
+TYPE="${1:?Usage: $0 <patch|minor|major|dev|stage|rc|beta>}"
 
 git fetch --tags --quiet origin
 
@@ -47,10 +47,11 @@ case "$TYPE" in
     major) version="v$((major + 1)).0.0" ;;
     dev)   version=$(next_suffix "v${major}.${minor}.$((patch + 1))" dev) ;;
     rc)    version=$(next_suffix "v${major}.${minor}.$((patch + 1))" rc) ;;
+    beta)  version=$(next_suffix "v${major}.${minor}.$((patch + 1))" beta) ;;
     stage) version=$(next_suffix "v${major}.${minor}.${patch}" stage) ;;
     *)
         echo "Unknown release type: $TYPE" >&2
-        echo "Valid types: patch, minor, major, dev, stage, rc" >&2
+        echo "Valid types: patch, minor, major, dev, stage, rc, beta" >&2
         exit 1
         ;;
 esac
