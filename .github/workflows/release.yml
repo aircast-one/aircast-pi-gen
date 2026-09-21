@@ -41,6 +41,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
+      apt_channel: ${{ steps.version.outputs.apt_channel }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       environment: ${{ steps.version.outputs.environment }}
       aircastd_version: ${{ steps.version.outputs.aircastd_version }}
@@ -78,8 +79,13 @@ jobs:
             exit 1
           fi
 
-          # A beta is a stable-channel image (same apt channel, credentials and
-          # bucket) that the flasher lists but never picks by default.
+          # A beta carries production credentials and lands in the stable
+          # bucket, but installs aircastd from the testing channel — new
+          # software against the real cloud is the whole point of it, and it
+          # keeps that software off stable devices. The flasher lists it and
+          # never picks it by default.
+          APT_CHANNEL="$DISTRIBUTION"
+          if [[ "$VERSION" == *-beta.* ]]; then APT_CHANNEL="testing"; fi
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then PRERELEASE=false; else PRERELEASE=true; fi
 
           # Set environment based on distribution
@@ -94,10 +100,11 @@ jobs:
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "distribution=$DISTRIBUTION" >> $GITHUB_OUTPUT
+          echo "apt_channel=$APT_CHANNEL" >> $GITHUB_OUTPUT
           echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
           echo "aircastd_version=$AIRCASTD_VERSION" >> $GITHUB_OUTPUT
-          echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT)"
+          echo "Building $VERSION for $DISTRIBUTION channel (env: $ENVIRONMENT, aircastd from $APT_CHANNEL)"
 
   build:
     needs: prepare
@@ -203,6 +210,7 @@ jobs:
           # the exact version to pin (empty = channel-latest), and the provenance
           # baked into /etc/aircast-release.json.
           export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
+          export AIRCAST_APT_CHANNEL='${{ needs.prepare.outputs.apt_channel }}'
           export AIRCASTD_VERSION='${{ needs.prepare.outputs.aircastd_version }}'
           export IMAGE_VERSION='${{ needs.prepare.outputs.version }}'
           export PI_GEN_REF='${{ needs.prepare.outputs.version }}'

@@ -62,9 +62,10 @@ latest:
 # suffix picks the channel the image is published to and the aircastd apt
 # channel it bakes:
 #   stable: v1.2.3   dev: v1.2.3-dev.N   stage: -stage.N   rc(testing): -rc.N
-#   beta: v1.2.3-beta.N - built and published exactly like stable (same apt
-#   channel, credentials and bucket) but marked pre-release, so the flasher
-#   lists it as beta and never picks it by default.
+#   beta: v1.2.3-beta.N - production credentials and the stable bucket, but
+#   aircastd comes from the testing channel (cut one with `just release rc` in
+#   aircastd). Marked pre-release, so the flasher lists it as beta and never
+#   picks it by default.
 
 # Create and push a release tag. TYPE: patch|minor|major|dev|stage|rc|beta
 [group('release')]

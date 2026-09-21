@@ -49,6 +49,10 @@ EOF
 fi
 
 AIRCAST_DISTRIBUTION="${AIRCAST_DISTRIBUTION:-development}"
+# Which apt channel aircastd comes from. Normally the image's own channel; a
+# beta image is a production image (issuer, bucket) that deliberately carries
+# testing-channel aircastd, which is the thing under test.
+AIRCAST_APT_CHANNEL="${AIRCAST_APT_CHANNEL:-${AIRCAST_DISTRIBUTION}}"
 AIRCAST_APT_KEY_URL="https://apt.aircast.one/public-key.gpg"
 AIRCAST_APT_BASE="https://apt.aircast.one/aircastd"
 
@@ -58,7 +62,7 @@ install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings"
 curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
 	"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
 
-echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_DISTRIBUTION} main" \
+echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_APT_CHANNEL} main" \
 	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast.list"
 
 # Pin to the exact released version so the image is deterministic — a later

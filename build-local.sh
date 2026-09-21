@@ -123,23 +123,25 @@ build_prod() {
 		echo "!! prod build needs a version: ./build-local.sh prod v1.2.3" >&2
 		exit 1
 	fi
-	local channel=stable
+	local channel=stable apt_channel=""
 	case "$version" in
 		*-dev.*)   channel=development ;;
 		*-stage.*) channel=staging ;;
 		*-rc.*)    channel=testing ;;
+		*-beta.*)  channel=stable; apt_channel=testing ;;
 	esac
 	rm -f "${LOCAL_AIRCASTD}"
-	grep -vE '^(export )?(DEPLOY_COMPRESSION|AIRCAST_DISTRIBUTION|AIRCASTD_VERSION|IMAGE_VERSION|PI_GEN_REF|PI_GEN_COMMIT)=' config > "$PROD_CONFIG"
+	grep -vE '^(export )?(DEPLOY_COMPRESSION|AIRCAST_DISTRIBUTION|AIRCAST_APT_CHANNEL|AIRCASTD_VERSION|IMAGE_VERSION|PI_GEN_REF|PI_GEN_COMMIT)=' config > "$PROD_CONFIG"
 	{
 		echo "DEPLOY_COMPRESSION=xz"
 		echo "export AIRCAST_DISTRIBUTION=${channel}"
+		if [ -n "$apt_channel" ]; then echo "export AIRCAST_APT_CHANNEL=${apt_channel}"; fi
 		echo "export AIRCASTD_VERSION='${AIRCASTD_VERSION:-}'"
 		echo "export IMAGE_VERSION='${version}'"
 		echo "export PI_GEN_REF='${version}'"
 		echo "export PI_GEN_COMMIT='$(git rev-parse --short HEAD)'"
 	} >> "$PROD_CONFIG"
-	echo ">> PROD build ${version} (channel ${channel}, aircastd ${AIRCASTD_VERSION:-channel-latest})"
+	echo ">> PROD build ${version} (channel ${channel}, aircastd ${apt_channel:-$channel}/${AIRCASTD_VERSION:-channel-latest})"
 	BUILD_CONFIG="$PROD_CONFIG" build_fast
 
 	# Stamp what was just built so publish-local.sh ships exactly this image —
