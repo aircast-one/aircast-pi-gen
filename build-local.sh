@@ -119,7 +119,7 @@ build_fast() {
 # is a drift bug; keep the two in step.
 build_prod() {
 	local version="${1:-}"
-	if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(dev|stage|rc)\.[0-9]+)?$ ]]; then
+	if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(dev|stage|rc|beta)\.[0-9]+)?$ ]]; then
 		echo "!! prod build needs a version: ./build-local.sh prod v1.2.3" >&2
 		exit 1
 	fi
