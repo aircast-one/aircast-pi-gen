@@ -147,7 +147,7 @@ build_prod() {
 	# Stamp what was just built so publish-local.sh ships exactly this image —
 	# never "newest file in deploy/", which can be a later dev build.
 	local img
-	img=$(ls -t deploy/*.img.xz deploy/*.img 2>/dev/null | head -1)
+	img=$(ls -t deploy/*.img.xz deploy/*.img 2>/dev/null | head -1 || true)
 	[ -n "$img" ] || { echo "!! prod build produced no image in deploy/" >&2; exit 1; }
 	printf '%s %s\n' "$version" "$(basename "$img")" > deploy/.publish-version
 	echo ">> stamped deploy/.publish-version: ${version} $(basename "$img")"
