@@ -8,5 +8,9 @@
 # A drone image carries a handful of USB devices and wants none of them
 # suspended, so the rule covers the bus rather than a list that has to be
 # remembered every time hardware changes.
-ACTION=="add", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
-ACTION=="add", SUBSYSTEM=="usb", TEST=="power/autosuspend", ATTR{power/autosuspend}="-1"
+# Both actions: at add time the power attributes may not exist yet and the
+# write is silently skipped — a hub re-enumerated on this device kept
+# autosuspend for exactly that reason — while bind fires once the driver is
+# attached and the attributes are there.
+ACTION=="add|bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{power/control}="on"
+ACTION=="add|bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{power/autosuspend}="-1"
