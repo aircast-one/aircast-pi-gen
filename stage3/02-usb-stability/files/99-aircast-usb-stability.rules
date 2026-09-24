@@ -1,15 +1,12 @@
-# Aircast - USB stability rules for flight controllers
-# Disables USB autosuspend for flight controllers to prevent
-# DWC2 disconnect/reconnect bug on Pi Zero 2W (raspberrypi/linux#6247)
-
-# ArduPilot flight controllers (Cube Orange, Pixhawk, etc.)
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
-
-# PX4/Pixhawk flight controllers
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="26ac", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
-
-# STM32 CDC ACM devices (common in flight controllers)
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
-
-# Holybro flight controllers
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="3162", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
+# The DWC2 host controller on a Pi Zero 2 W drops and re-enumerates a device
+# when it is allowed to autosuspend (raspberrypi/linux#6247). This rule used to
+# name flight-controller vendor IDs one at a time, which left every other
+# peripheral exposed: an OpenIPC camera (1d6b) enumerated and died eighty times
+# in half an hour on a device whose flight controller, covered by the list, was
+# rock steady.
+#
+# A drone image carries a handful of USB devices and wants none of them
+# suspended, so the rule covers the bus rather than a list that has to be
+# remembered every time hardware changes.
+ACTION=="add", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", TEST=="power/autosuspend", ATTR{power/autosuspend}="-1"
