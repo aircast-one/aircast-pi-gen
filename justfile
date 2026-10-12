@@ -1,22 +1,3 @@
-# aircast-pi-gen task runner. Run `just` to list recipes.
-#
-# Local Raspberry Pi image builds. Thin wrapper around ./build-local.sh, which
-# does the real work; see that script and README.md for the build pipeline.
-#
-# On Apple Silicon the image builds NATIVELY (arm64 host + arm64 Docker), so
-# there is no QEMU emulation penalty. Speedups baked in: stage3-only rebuilds
-# reuse the cached stage0-2 base (pigen_work), apt-cacher-ng caches .deb
-# downloads, and a locally-built aircastd is baked in instead of pulled from R2.
-#
-# Testing a change:  just build
-# Shipping:          just build v1.2.3 v0.3.4  &&  just publish v1.2.3
-# Re-releasing:      just build v1.2.3 v0.3.4  &&  just publish v1.2.3 --yes --force
-#
-# The first build of the day rebuilds every stage on its own; later ones reuse
-# the cached base and redo stage3 only. `just reset` forces the long way round.
-# build-local.sh exposes the rest of the matrix if you need it.
-
-# Line recipes run under bash with fail-fast flags.
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 deploy_dir := "deploy"
@@ -58,16 +39,7 @@ latest:
     @ls -t {{deploy_dir}}/*.img {{deploy_dir}}/*.img.xz 2>/dev/null | head -1 || \
         echo "no image in {{deploy_dir}}/ — run 'just build'"
 
-# Tags drive the delivery pipeline (.github/workflows/release.yml) and the tag
-# suffix picks the channel the image is published to and the aircastd apt
-# channel it bakes:
-#   stable: v1.2.3   dev: v1.2.3-dev.N   stage: -stage.N   rc(testing): -rc.N
-#   beta: v1.2.3-beta.N - production credentials and the stable bucket, but
-#   aircastd comes from the testing channel (cut one with `just release rc` in
-#   aircastd). Marked pre-release, so the flasher lists it as beta and never
-#   picks it by default.
-
-# Create and push a release tag. TYPE: patch|minor|major|dev|stage|rc|beta
+# Create and push a release tag. TYPE: patch|minor|major|rc|beta
 [group('release')]
 release TYPE:
     ./scripts/release.sh {{TYPE}}
