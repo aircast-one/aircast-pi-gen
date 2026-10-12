@@ -59,15 +59,19 @@ setup
 tag_here v3.0.0
 commit "fork to aircast-lite"
 tag_here v0.3.2
-expect rc v0.3.3-rc.1
+expect dev v0.3.3-dev.1
 
 echo "suffixed releases count from the highest existing suffix, not from one"
 setup
 tag_here v0.3.2
-tag_here v0.3.3-rc.1
-tag_here v0.3.3-rc.9
-expect rc v0.3.3-rc.10
+tag_here v0.3.3-dev.1
+tag_here v0.3.3-dev.9
+expect dev v0.3.3-dev.10
 expect patch v0.3.3
+setup
+tag_here v0.3.2
+tag_here v0.3.2-stage.4
+expect stage v0.3.2-stage.5
 setup
 tag_here v0.3.2
 expect rc v0.3.3-rc.1

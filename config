@@ -6,8 +6,16 @@ DISABLE_FIRST_BOOT_USER_RENAME=1
 STAGE_LIST="stage0 stage1 stage2 stage3"
 RELEASE=trixie
 TARGET_HOSTNAME=aircast
+# Wi-Fi regulatory domain. Required for AP/hotspot mode: on the world ("00")
+# regdomain the kernel flags 2.4GHz channels NO-IR (no beaconing), so the
+# recovery hotspot can't broadcast. GE = Georgia (matches the cellular carriers
+# this fleet ships to). Also keeps Wi-Fi enabled instead of stage2 disabling it.
 WPA_COUNTRY=GE
 PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
+# Local apt cache (apt-cacher-ng container on the host, started by
+# build-local.sh). Targets the docker bridge gateway by IP so it resolves
+# despite the --dns override above. CI regenerates this whole file in the
+# release workflow, so these local-dev values never leak into releases.
 APT_PROXY=http://172.17.0.1:3142
 DEPLOY_COMPRESSION=none
-export AIRCAST_DISTRIBUTION=stable
+export AIRCAST_DISTRIBUTION=development

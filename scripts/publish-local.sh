@@ -9,6 +9,8 @@ export AWS_REQUEST_CHECKSUM_CALCULATION="${AWS_REQUEST_CHECKSUM_CALCULATION:-whe
 
 channel_for_version() {
     case "$1" in
+        *-dev.*)   echo "development downloads-dev.aircast.one" ;;
+        *-stage.*) echo "staging downloads.stage.aircast.one" ;;
         *-rc.*)    echo "testing downloads.aircast.one" ;;
         *-beta.*)  echo "stable downloads.aircast.one" ;;
         *)         echo "stable downloads.aircast.one" ;;
@@ -16,7 +18,7 @@ channel_for_version() {
 }
 
 valid_version() {
-    [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$ ]]
+    [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(dev|stage|rc|beta)\.[0-9]+)?$ ]]
 }
 
 if [ "${1:-}" = "--print-channel" ]; then
@@ -25,7 +27,7 @@ if [ "${1:-}" = "--print-channel" ]; then
     exit 0
 fi
 
-VERSION="${1:?Usage: $0 <vX.Y.Z[-rc.N|-beta.N]> [--yes] [--force]}"
+VERSION="${1:?Usage: $0 <vX.Y.Z[-dev.N|-stage.N|-rc.N|-beta.N]> [--yes] [--force]}"
 shift
 ASSUME_YES=""
 FORCE=""
@@ -39,7 +41,7 @@ done
 
 valid_version "$VERSION" || {
     echo "Invalid version: $VERSION" >&2
-    echo "Expected vX.Y.Z, or vX.Y.Z with -rc.N / -beta.N" >&2
+    echo "Expected vX.Y.Z, or vX.Y.Z with -dev.N / -stage.N / -rc.N / -beta.N" >&2
     exit 1
 }
 
@@ -65,6 +67,8 @@ SEMVER_KEY='def semver_key:
        else [1, []] end) as $pre
     | [$core[0], $core[1], $core[2], $pre[0], $pre[1]];'
 
+# Publish exactly what `build-local.sh prod` stamped — never "newest file in
+# deploy/", which can be a later dev build with the wrong provenance baked in.
 DEPLOY_DIR="${DEPLOY_DIR:-deploy}"
 MARKER="${DEPLOY_DIR}/.publish-version"
 [ -f "$MARKER" ] || { echo "No ${MARKER} — run 'just build ${VERSION}' first" >&2; exit 1; }
@@ -117,6 +121,9 @@ trap 'rm -rf "$WORK"' EXIT
 aws s3 cp "${S3_PATH}/releases.json" "${WORK}/existing.json" 2>/dev/null \
     || echo '{"releases":[]}' > "${WORK}/existing.json"
 
+# A new version may never move its own major.minor line backwards: with 0.34.1
+# published, 0.34.0 is refused while 0.34.2 is fine. Older lines stay
+# publishable for hotfixes; the semver sort below keeps them off "latest".
 if [ -z "$REPUBLISH" ]; then
     BARE="${VERSION#v}"
     LINE="${BARE%%-*}"
@@ -144,6 +151,8 @@ CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 aws s3 cp "${WORK}/${ASSET}"    "${S3_PATH}/${VERSION}/${ASSET}"
 aws s3 cp "${WORK}/${CHECKSUM}" "${S3_PATH}/${VERSION}/${CHECKSUM}"
 
+# On a --force re-release, sweep stale differently-named files only AFTER the
+# new ones are up: S3 object overwrite is atomic, so downloads never 404.
 if [ -n "$REPUBLISH" ]; then
     aws s3 rm --recursive "${S3_PATH}/${VERSION}/" \
         --exclude "$ASSET" --exclude "$CHECKSUM"
@@ -171,12 +180,15 @@ jq -n \
               download_url: $download_url, checksum_url: $checksum_url}}' \
     > "${WORK}/new.json"
 
+# Highest version first, whatever order things were published in: a hotfix on
+# an old line lands in its right place instead of becoming "latest".
 jq --slurpfile new "${WORK}/new.json" "${SEMVER_KEY}"'
      .releases = ([$new[0]] + [.releases[] | select(.version != $new[0].version)]
                   | sort_by(.version | ltrimstr("v") | semver_key) | reverse)' \
     "${WORK}/existing.json" > "${WORK}/releases.json"
 
 aws s3 cp "${WORK}/releases.json" "${S3_PATH}/releases.json"
+
 
 echo "Published ${VERSION} to ${DISTRIBUTION}"
 echo "https://${DOWNLOADS_DOMAIN}/${URL_PATH}/${VERSION}/${ASSET}"
