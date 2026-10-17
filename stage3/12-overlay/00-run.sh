@@ -17,11 +17,26 @@ install -D -m 644 files/aircast-firstboot-data.service "${ROOTFS_DIR}/etc/system
 install -D -m 755 files/initramfs-scripts/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-overlay"
 install -D -m 755 files/initramfs-hooks/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-overlay"
 
+# Wifi unlock: associate wlan0 in init-premount (before the Clevis local-top
+# unlock) so a wifi-only encrypted card can reach Tang at boot. Both are no-ops
+# unless first boot staged a wifi supplicant config.
+install -D -m 755 files/initramfs-scripts/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/scripts/init-premount/aircast-wifi"
+install -D -m 755 files/initramfs-hooks/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-wifi"
+
 # Tailscale survives factory reset (bind from data/keep). The tmpfiles rule
 # guarantees keep/tailscale exists on every boot even if first-boot setup was
 # interrupted, so the bind mount never silently skips.
 install -D -m 644 files/var-lib-tailscale.mount "${ROOTFS_DIR}/etc/systemd/system/var-lib-tailscale.mount"
 install -D -m 644 files/aircast-overlay.tmpfiles "${ROOTFS_DIR}/etc/tmpfiles.d/aircast-overlay.conf"
+
+# The encrypted data partition (opt-in, enrolled at first boot by
+# aircast-firstboot-data.sh) is not the root device, so cryptsetup-initramfs
+# would leave it out of the initramfs unless told to include every crypttab
+# entry. The crypttab itself is written at first boot; this only makes the
+# later `update-initramfs -u` carry that entry's unlock tooling.
+install -D -m 644 /dev/stdin "${ROOTFS_DIR}/etc/cryptsetup-initramfs/conf-hook" <<'EOF'
+CRYPTSETUP=y
+EOF
 
 on_chroot << 'EOF'
 # We no longer grow rootfs to fill the card; the free space becomes the data

@@ -1,2 +1,9 @@
 initramfs-tools
 parted
+cryptsetup
+cryptsetup-initramfs
+clevis
+clevis-luks
+clevis-initramfs
+wpasupplicant
+iw
