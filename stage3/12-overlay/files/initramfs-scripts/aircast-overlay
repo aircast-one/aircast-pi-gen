@@ -1,23 +1,4 @@
 #!/bin/sh
-# initramfs-tools local-bottom hook: runs after the rootfs is mounted at
-# ${rootmnt} and before switch_root. Re-mounts root read-only with a persistent
-# overlay whose writable layer lives on the "data" partition.
-#
-#   lowerdir = ${rootmnt} (read-only image = factory baseline)
-#   upper    = data/overlay/upper   (all runtime writes)
-#   work     = data/overlay/work
-#
-# Factory reset: aircastd writes /boot/firmware/factory-reset and reboots. This
-# hook removes the flag FIRST and only then wipes upper/work (never keep/) — so a
-# failed clear can never cause a wipe-on-every-boot loop. /var/lib/tailscale is
-# bind-mounted from data/keep in userspace, so it survives.
-#
-# Fail-safe: if anything goes wrong assembling the overlay, fall back to a normal
-# read-WRITE root rather than a read-only one, and log loudly. First boot (no data
-# partition yet) is a no-op: the system boots rw and the firstboot service creates
-# data, then reboots.
-#
-# !!! Runtime path unverified — must be confirmed on a spare SD (build+flash).
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
@@ -26,6 +7,7 @@ case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
 
 DATA=/run/aircast-data
 DATA_DEV=/dev/disk/by-label/data
+[ -b /dev/mapper/data ] && DATA_DEV=/dev/mapper/data
 
 [ -b "$DATA_DEV" ] || exit 0
 
@@ -33,17 +15,10 @@ modprobe overlay 2>/dev/null || true
 mkdir -p "$DATA"
 mount -t ext4 "$DATA_DEV" "$DATA" || { log_failure_msg "aircast-overlay: mount data failed; booting without overlay"; exit 0; }
 
-# Drop the layer as a whole rather than globbing its contents: a glob skips
-# dotfiles and overlayfs whiteouts (.wh.*), which is precisely the state a wipe
-# has to clear. The dirs are recreated below.
 wipe_upper() {
 	rm -rf "$DATA/overlay/upper" "$DATA/overlay/work" 2>/dev/null || true
 }
 
-# Every flash restores the boot partition to the image's pristine contents, so it
-# is the one surface that can distinguish a reboot from a re-flash. Both triggers
-# below clear their flag FIRST and wipe only once that succeeded, so a failed
-# write can never become a wipe-on-every-boot loop.
 BOOT=/run/aircast-boot
 BOOT_DEV=$(findfs LABEL=bootfs 2>/dev/null || true)
 [ -b "$BOOT_DEV" ] || BOOT_DEV=/dev/disk/by-label/bootfs
@@ -54,11 +29,6 @@ if [ -b "$BOOT_DEV" ] && mount -t vfat -o rw "$BOOT_DEV" "$BOOT" 2>/dev/null; th
 		log_warning_msg "aircast-overlay: factory reset requested — wiping writable layer"
 		wipe_upper
 	fi
-	# The data partition lives past the image, so a flash leaves it untouched. A
-	# layer with no marker beside it belongs to the install that was flashed away
-	# — its /etc, its NetworkManager profiles, its cloud-init instance cache — and
-	# adopting it would silently shadow the image the operator just wrote, down to
-	# cloud-init deciding it has already run.
 	if [ ! -f "$BOOT/aircast-installed" ]; then
 		if touch "$BOOT/aircast-installed" 2>/dev/null; then
 			sync
@@ -86,11 +56,6 @@ fallback_rw() {
 	exit 0
 }
 
-# Bind the real root to a SEPARATE path and use that as the read-only lower, so
-# the overlay's lowerdir is never the same path the overlay is later mounted onto
-# (over-mounting your own lowerdir is the overlayroot pitfall). overlayfs pins the
-# lower by its vfsmount, so moving it into the new root below keeps it valid after
-# switch_root.
 mkdir -p "$LOWER" "$NEWROOT"
 mount --bind "$rootmnt" "$LOWER" || fallback_rw "bind lower failed"
 mount -o remount,ro,bind "$LOWER" 2>/dev/null || true
@@ -99,8 +64,6 @@ mount -t overlay aircast-overlay \
 	-o "lowerdir=$LOWER,upperdir=$DATA/overlay/upper,workdir=$DATA/overlay/work" \
 	"$NEWROOT" || fallback_rw "overlay mount failed"
 
-# Carry the data partition and the read-only lower into the new root so both
-# survive switch_root.
 mkdir -p "$NEWROOT/data" "$NEWROOT/mnt/lower"
 mount --move "$DATA" "$NEWROOT/data" || { umount "$NEWROOT" 2>/dev/null || true; fallback_rw "could not move data into overlay"; }
 mount --move "$LOWER" "$NEWROOT/mnt/lower" 2>/dev/null || true

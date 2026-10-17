@@ -1,11 +1,4 @@
 #!/bin/sh
-# initramfs-tools hook: when a wifi uplink has been staged for boot-time unlock
-# (aircast-initramfs.conf present), pull the wifi stack into the initramfs so it
-# can associate wlan0 and reach the Tang server before the root is decrypted.
-# Only fires on an encrypted wifi card — a wired or plaintext card builds a
-# normal initramfs.
-#
-# !!! Boot path UNVERIFIED — must be confirmed on a spare SD.
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
@@ -24,7 +17,6 @@ copy_exec /sbin/iw /sbin 2>/dev/null || true
 mkdir -p "${DESTDIR}/etc/wpa_supplicant"
 cp -a "$CONF" "${DESTDIR}/etc/wpa_supplicant/aircast-initramfs.conf"
 
-# Broadcom (Pi built-in) wifi plus the common USB chipsets, and their firmware.
 for mod in brcmfmac brcmutil cfg80211 rtl8xxxu mac80211; do
 	manual_add_modules "$mod"
 done
@@ -32,6 +24,4 @@ for fw in /lib/firmware/brcm/brcmfmac* /lib/firmware/cypress/*; do
 	[ -e "$fw" ] && copy_file firmware "$fw" 2>/dev/null || true
 done
 
-# configure_networking brings up the wired device by default; point it at wlan0,
-# which the init-premount script will have associated by the time Clevis runs.
 echo "DEVICE=wlan0" >>"${DESTDIR}/conf/initramfs.conf"
