@@ -17,7 +17,7 @@ copy_exec /sbin/iw /sbin 2>/dev/null || true
 mkdir -p "${DESTDIR}/etc/wpa_supplicant"
 cp -a "$CONF" "${DESTDIR}/etc/wpa_supplicant/aircast-initramfs.conf"
 
-for mod in brcmfmac brcmutil cfg80211 rtl8xxxu mac80211; do
+for mod in brcmfmac brcmfmac-wcc brcmfmac-cyw brcmfmac-bca brcmutil cfg80211 rtl8xxxu mac80211; do
 	manual_add_modules "$mod"
 done
 for fw in /lib/firmware/brcm/brcmfmac* /lib/firmware/cypress/*; do

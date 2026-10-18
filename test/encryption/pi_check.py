@@ -20,6 +20,7 @@ echo "initramfs_clevis=$(has clevis-decrypt-sss)"
 echo "initramfs_ca=$(has etc/ssl/certs/ca-certificates.crt)"
 echo "initramfs_wifi_conf=$(has aircast-initramfs.conf)"
 echo "initramfs_brcmfmac=$(has brcmfmac.ko)"
+echo "initramfs_brcmfmac_vendor=$(has brcmfmac-wcc.ko)"
 echo "initramfs_brcm_fw=$(has lib/firmware/brcm/brcmfmac)"
 echo "wifi_staged=$([ -e /etc/wpa_supplicant/aircast-initramfs.conf ] && echo yes || echo no)"
 echo "initramfs_supplicant_left=$(pgrep -f aircast-initramfs.conf >/dev/null && echo yes || echo no)"
@@ -40,7 +41,7 @@ def expectations(wifi, cloud):
     return {**base,
             **({"initramfs_ca": "yes"} if cloud else {}),
             **({"wifi_staged": "yes", "initramfs_wifi_conf": "yes",
-                "initramfs_brcmfmac": "yes", "initramfs_brcm_fw": "yes",
+                "initramfs_brcmfmac": "yes", "initramfs_brcmfmac_vendor": "yes", "initramfs_brcm_fw": "yes",
                 "initramfs_supplicant_left": "no"} if wifi else {})}
 
 
