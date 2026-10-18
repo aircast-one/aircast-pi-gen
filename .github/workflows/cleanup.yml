@@ -2,7 +2,7 @@ name: Cleanup
 
 on:
   schedule:
-    - cron: '0 3 * * 0' # Weekly on Sunday at 3am UTC
+    - cron: '0 3 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   cleanup:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Delete old workflow artifacts
         env:

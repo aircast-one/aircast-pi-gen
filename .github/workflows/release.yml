@@ -31,7 +31,7 @@ env:
 
 jobs:
   prepare:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       distribution: ${{ steps.version.outputs.distribution }}
@@ -94,7 +94,7 @@ jobs:
 
   build:
     needs: prepare
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-24.04-arm
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -107,13 +107,6 @@ jobs:
       image_name: ${{ steps.artifacts.outputs.image_name }}
 
     steps:
-      - name: Pre-cleanup (remove leftover work directories)
-        run: |
-          if [ -d "work" ]; then
-            echo "Found leftover work directory, cleaning up..."
-            sudo rm -rf work/
-          fi
-
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
@@ -127,11 +120,6 @@ jobs:
             coreutils quilt parted qemu-user-static debootstrap zerofree zip \
             dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
             gpg pigz xxd arch-test bmap-tools zstd
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - name: Ensure apt-cacher-ng proxy
         id: apt-proxy
@@ -220,13 +208,6 @@ jobs:
             echo "Base cache MISS - running a full build; stages 0-2 will be uploaded afterward"
             echo "cache_hit=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Clean up Docker containers
-        run: |
-          echo "Cleaning up any existing Docker containers..."
-          docker rm -f pigen_work 2>/dev/null || true
-          docker rm -f pigen_work_cont 2>/dev/null || true
-          echo "Container cleanup completed"
 
       - name: Build Pi image with Docker
         env:
@@ -347,53 +328,12 @@ jobs:
             ${{ steps.artifacts.outputs.image_path }}
             ${{ steps.artifacts.outputs.image_path }}.sha256
 
-      - name: Cleanup build artifacts
-        if: always()
-        run: |
-          echo "Cleaning up build artifacts to free disk space..."
-          echo "Note: the incremental base cache lives in R2, so work/ is safe to remove"
-
-          if [ -d "work" ]; then
-            echo "Removing work directory..."
-            sudo rm -rf work/
-            echo "  Work directory removed"
-          fi
-
-          if [ -d "deploy" ]; then
-            echo "Removing deploy directory..."
-            rm -rf deploy/
-            echo "  Deploy directory removed"
-          fi
-
-          echo "Cleaning up Docker containers..."
-          docker rm -f pigen_work 2>/dev/null && echo "  Removed pigen_work container" || true
-          docker rm -f pigen_work_cont 2>/dev/null && echo "  Removed pigen_work_cont container" || true
-
-          echo "Cleaning up Docker volumes..."
-          DANGLING_VOLUMES=$(docker volume ls -qf dangling=true)
-          if [ -n "$DANGLING_VOLUMES" ]; then
-            docker volume rm $DANGLING_VOLUMES 2>/dev/null && echo "  Removed dangling volumes" || true
-          fi
-
-          echo "Pruning unused Docker resources..."
-          docker system prune -f 2>/dev/null || true
-
-          echo ""
-          echo "Disk usage after cleanup:"
-          df -h / | tail -1
-
-          echo "[OK] Cleanup completed"
-
   release:
     needs: [prepare, build]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
-      - name: Clean workspace
-        run: |
-          rm -f aircast-lite-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
-
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -409,6 +349,7 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: Aircast Lite Image ${{ needs.prepare.outputs.version }}
           body: |
+
             ## Aircast Raspberry Pi Image
 
             **Channel:** ${{ needs.prepare.outputs.distribution }}${{ contains(needs.prepare.outputs.version, '-beta.') && ' (beta)' || '' }}
@@ -437,7 +378,7 @@ jobs:
   mirror-to-s3:
     needs: [prepare, build, release]
     if: needs.release.result == 'success'
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -648,7 +589,7 @@ jobs:
   notify:
     needs: [prepare, build, release, mirror-to-s3]
     if: always()
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Generate build summary
