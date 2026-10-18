@@ -118,12 +118,13 @@ def extract_boot(card):
     return out
 
 
-def boot(card, extra, name, answer=None, hold=60, timeout=1800):
+def boot(card, extra, name, answer=None, hold=60, timeout=1800, dead_nic=False):
     files = extract_boot(card)
     cmdline = (files / "cmdline.txt").read_text().strip() + (" " + extra if extra else "")
     cmd = ["qemu-system-aarch64", "-M", "virt", "-accel", "hvf", "-cpu", "host", "-m", "2048", "-smp", "4",
            "-kernel", str(files / "kernel8.img"), "-initrd", str(files / "initramfs8"), "-append", cmdline,
            "-device", "sdhci-pci", "-drive", f"if=none,id=sd,file={card},format=raw,cache=unsafe,discard=unmap,detect-zeroes=unmap", "-device", "sd-card,drive=sd",
+           *(["-netdev", "hubport,id=dead,hubid=9", "-device", "virtio-net-pci,netdev=dead"] if dead_nic else []),
            "-netdev", "user,id=net", "-device", "virtio-net-pci,netdev=net",
            "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot"]
     log_path = WORK / "logs" / f"{name}.log"
@@ -230,21 +231,24 @@ def plain(image, results):
            "scan failed to find plaintext — the at-rest check would be meaningless")
 
 
-def wifi_without_radio(image, results):
-    print("encrypted Wi-Fi card on hardware with no Wi-Fi radio", flush=True)
+def wifi_card_wired(image, results):
+    print("encrypted Wi-Fi card booted with no Wi-Fi, on a cable", flush=True)
     adv = tang_up()
     card, key = WORK / "card-wifi.img", secrets.token_hex(24)
     flash_card(image, card, adv=adv, key=key, wifi=("aircast-test", "correct-horse-battery"))
     first = boot(card, "", "wifi-1-first-boot")
     if not expect(results, "first boot enrols with Wi-Fi staged for the initramfs", ENROLLED in first.log and not first.timed_out):
         return
-    second = boot(card, "aircast.test=1", "wifi-2-no-radio", answer=key, timeout=600)
-    expect(results, "no radio means no Tang, so it waits at the prompt instead of unlocking",
-           second.held, "booted past the prompt before the key was typed" if second.prompted else "no prompt")
-    expect_report(results, "recovery key still unlocks it", second, luks="yes")
+    second = boot(card, "aircast.test=1", "wifi-2-wired-fallback", dead_nic=True)
+    expect_report(results, "unlocks from Tang over whichever interface answers, past a dead one", second, luks="yes")
+    tang_down()
+    third = boot(card, "aircast.test=1", "wifi-3-recovery", answer=key, timeout=600)
+    expect(results, "with Tang unreachable it waits at the prompt instead of unlocking",
+           third.held, "booted past the prompt before the key was typed" if third.prompted else "no prompt")
+    expect_report(results, "recovery key still unlocks it", third, luks="yes")
 
 
-SCENARIOS = {"lifecycle": lifecycle, "plain": plain, "wifi": wifi_without_radio}
+SCENARIOS = {"lifecycle": lifecycle, "plain": plain, "wifi": wifi_card_wired}
 
 
 def main():

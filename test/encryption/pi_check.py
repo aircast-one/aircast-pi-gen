@@ -22,6 +22,7 @@ echo "initramfs_wifi_conf=$(has aircast-initramfs.conf)"
 echo "initramfs_brcmfmac=$(has brcmfmac.ko)"
 echo "initramfs_brcm_fw=$(has lib/firmware/brcm/brcmfmac)"
 echo "wifi_staged=$([ -e /etc/wpa_supplicant/aircast-initramfs.conf ] && echo yes || echo no)"
+echo "initramfs_supplicant_left=$(pgrep -f aircast-initramfs.conf >/dev/null && echo yes || echo no)"
 echo "eth0_carrier=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo none)"
 """
 
@@ -39,7 +40,8 @@ def expectations(wifi, cloud):
     return {**base,
             **({"initramfs_ca": "yes"} if cloud else {}),
             **({"wifi_staged": "yes", "initramfs_wifi_conf": "yes",
-                "initramfs_brcmfmac": "yes", "initramfs_brcm_fw": "yes"} if wifi else {})}
+                "initramfs_brcmfmac": "yes", "initramfs_brcm_fw": "yes",
+                "initramfs_supplicant_left": "no"} if wifi else {})}
 
 
 def main():

@@ -23,7 +23,7 @@ fi
 
 ip link set wlan0 up 2>/dev/null || true
 mkdir -p /run/wpa_supplicant
-wpa_supplicant -B -Dnl80211,wext -i wlan0 -c "$CONF" 2>/dev/null \
+wpa_supplicant -B -P /run/aircast-wifi.pid -Dnl80211,wext -i wlan0 -c "$CONF" 2>/dev/null \
 	|| { log_failure_msg "aircast-wifi: wpa_supplicant failed to start"; exit 0; }
 
 i=0

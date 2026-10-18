@@ -7,6 +7,7 @@ install -D -m 755 files/initramfs-scripts/aircast-overlay "${ROOTFS_DIR}/etc/ini
 install -D -m 755 files/initramfs-hooks/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-overlay"
 
 install -D -m 755 files/initramfs-scripts/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/scripts/init-premount/aircast-wifi"
+install -D -m 755 files/initramfs-scripts/aircast-wifi-stop "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-wifi-stop"
 install -D -m 755 files/initramfs-hooks/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-wifi"
 
 install -D -m 644 files/var-lib-tailscale.mount "${ROOTFS_DIR}/etc/systemd/system/var-lib-tailscale.mount"

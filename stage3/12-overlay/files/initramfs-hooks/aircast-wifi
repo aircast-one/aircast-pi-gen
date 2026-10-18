@@ -23,5 +23,3 @@ done
 for fw in /lib/firmware/brcm/brcmfmac* /lib/firmware/cypress/*; do
 	[ -e "$fw" ] && copy_file firmware "$fw" 2>/dev/null || true
 done
-
-echo "DEVICE=wlan0" >>"${DESTDIR}/conf/initramfs.conf"
