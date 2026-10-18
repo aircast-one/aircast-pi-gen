@@ -7,12 +7,10 @@ permissions:
   repository-projects: write
 
 on:
-  # The image owns its own version line; `just release <type>` pushes the tag.
   push:
     tags:
       - 'v*'
 
-  # Rebuild an already-tagged image (emergency / changed aircastd pin)
   workflow_dispatch:
     inputs:
       version:
@@ -24,10 +22,6 @@ on:
         required: false
         type: string
 
-# The runner box has two runner slots sharing one docker daemon, and the build
-# uses a fixed container name (pigen_work) plus daemon-wide cleanup steps — two
-# release builds running at once would docker-rm each other's containers
-# mid-build. Serialize them.
 concurrency:
   group: pi-image-build
   cancel-in-progress: false
@@ -66,8 +60,6 @@ jobs:
             AIRCASTD_VERSION=""
           fi
 
-          # The tag suffix is the single source of truth for the channel, so the
-          # image can't be published to one channel while numbered for another.
           if   [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]];   then DISTRIBUTION="development"
           elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-stage\.[0-9]+$ ]]; then DISTRIBUTION="staging"
           elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]];    then DISTRIBUTION="testing"
@@ -79,16 +71,10 @@ jobs:
             exit 1
           fi
 
-          # A beta carries production credentials and lands in the stable
-          # bucket, but installs aircastd from the testing channel — new
-          # software against the real cloud is the whole point of it, and it
-          # keeps that software off stable devices. The flasher lists it and
-          # never picks it by default.
           APT_CHANNEL="$DISTRIBUTION"
           if [[ "$VERSION" == *-beta.* ]]; then APT_CHANNEL="testing"; fi
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then PRERELEASE=false; else PRERELEASE=true; fi
 
-          # Set environment based on distribution
           case "$DISTRIBUTION" in
             "development"|"staging")
               ENVIRONMENT="development"
@@ -118,16 +104,11 @@ jobs:
 
     environment: ${{ needs.prepare.outputs.environment }}
     outputs:
-      # Versioned artifact name incl. its compression extension (e.g. .img.xz),
-      # derived from the actual built file so release/mirror never hardcode it
-      # and a future DEPLOY_COMPRESSION change can't drift the extension.
       image_name: ${{ steps.artifacts.outputs.image_name }}
 
     steps:
       - name: Pre-cleanup (remove leftover work directories)
         run: |
-          # Clean up any leftover work directories from previous builds
-          # These contain root-owned files that would cause checkout to fail
           if [ -d "work" ]; then
             echo "Found leftover work directory, cleaning up..."
             sudo rm -rf work/
@@ -155,8 +136,6 @@ jobs:
       - name: Ensure apt-cacher-ng proxy
         id: apt-proxy
         run: |
-          # A fresh runner box has no apt cache volume yet: seed it from the
-          # R2 copy so the first build there still hits the package cache.
           if ! docker volume inspect apt-cacher-ng-cache >/dev/null 2>&1; then
             if aws s3 cp s3://aircast-ci-cache/pi-gen-cache/apt-cacher-ng.tar.zst apt-cache.tar.zst --no-progress 2>/dev/null; then
               docker volume create apt-cacher-ng-cache
@@ -172,12 +151,8 @@ jobs:
               -p 3142:3142 -v apt-cacher-ng-cache:/var/cache/apt-cacher-ng \
               sameersbn/apt-cacher-ng:3.7.4-20220421 || true
 
-          # 172.17.0.1 is the docker0 bridge IP: the only host address the
-          # pi-gen container (and the chroot inside it) can always reach.
           PROXY_URL="http://172.17.0.1:3142"
           for _ in $(seq 1 10); do
-            # Same reachability semantics as build.sh's own APT_PROXY check
-            # (plain curl, any HTTP response counts).
             if curl -sm 2 "$PROXY_URL" -o /dev/null; then
               echo "url=$PROXY_URL" >> "$GITHUB_OUTPUT"
               echo "apt-cacher-ng reachable at $PROXY_URL - apt downloads will be cached"
@@ -185,8 +160,6 @@ jobs:
             fi
             sleep 1
           done
-          # Empty APT_PROXY means "no proxy" to build.sh, so a broken cacher
-          # degrades to an uncached build instead of failing the release.
           echo "url=" >> "$GITHUB_OUTPUT"
           echo "[WARN] apt-cacher-ng not reachable - building without apt cache"
 
@@ -206,9 +179,6 @@ jobs:
           PIGEN_DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4"
           DEPLOY_COMPRESSION=xz
           APT_PROXY='${{ steps.apt-proxy.outputs.url }}'
-          # Exported so stage3 sees them: the apt channel to pull aircastd from,
-          # the exact version to pin (empty = channel-latest), and the provenance
-          # baked into /etc/aircast-release.json.
           export AIRCAST_DISTRIBUTION='${{ needs.prepare.outputs.distribution }}'
           export AIRCAST_APT_CHANNEL='${{ needs.prepare.outputs.apt_channel }}'
           export AIRCASTD_VERSION='${{ needs.prepare.outputs.aircastd_version }}'
@@ -222,20 +192,12 @@ jobs:
       - name: Restore base cache from R2 (stages 0-2)
         id: cache-setup
         env:
-          # Bump to force a fresh base bake fleet-wide without touching stage files.
           CACHE_VERSION: "1"
         run: |
           set -euo pipefail
           WORK_DIR="work/${{ env.IMG_NAME }}"
 
-          # Cache key: a content hash of everything that shapes the base rootfs
-          # (stages 0-2 + the bootstrap machinery), but NOT stage3 or the generated
-          # `config` (which carries the per-release version/channel). So editing
-          # stage3 or cutting a new release keeps the key stable and hits the cache;
-          # only a base change re-bakes. RELEASE is pinned to the value in `config`.
           CACHE_KEY=$( {
-            # scripts/release*.sh are tag-cutting tooling with no effect on the
-            # rootfs; hashing them rotated the key on test-only commits.
             find stage0 stage1 stage2 scripts export-image export-noobs Dockerfile depends \
               -type f -not -name 'release.sh' -not -name 'release_test.sh' \
               -exec sha256sum {} + 2>/dev/null
@@ -250,11 +212,8 @@ jobs:
           mkdir -p "$WORK_DIR"
           if aws s3 cp "$CACHE_OBJ" cache.tar.zst --no-progress 2>/dev/null; then
             echo "Base cache HIT - restoring stages 0-2 and skipping their rebuild"
-            # -p/--numeric-owner: rootfs files carry assorted UIDs (e.g. pi=1000); sudo to write them.
             sudo tar -I zstd -xpf cache.tar.zst -C "$WORK_DIR" --numeric-owner
             rm -f cache.tar.zst
-            # pi-gen skips a stage's scripts (and its prerun) when a SKIP file exists
-            # in the stage dir (build.sh), reusing the restored work/IMG_NAME/stageN/rootfs.
             touch stage0/SKIP stage1/SKIP stage2/SKIP
             echo "cache_hit=true" >> "$GITHUB_OUTPUT"
           else
@@ -276,14 +235,11 @@ jobs:
           echo "Starting Docker-based build..."
           echo "Cache status: ${{ steps.cache-setup.outputs.cache_hit }}"
 
-          # build-docker.sh auto-detects cached stages and handles incremental builds
           ./build-docker.sh
 
           echo "Build completed successfully!"
 
       - name: Save base cache to R2 (stages 0-2)
-        # Only on a miss: a hit reused the identical, already-uploaded base, so
-        # stages 0-2 are byte-for-byte the cached ones and re-uploading is wasted work.
         if: success() && steps.cache-setup.outputs.cache_hit == 'false'
         run: |
           set -euo pipefail
@@ -299,7 +255,6 @@ jobs:
           done
 
           echo "Archiving base stages 0-2 (preserving ownership)..."
-          # -p/--numeric-owner so rootfs UIDs round-trip; sudo to read root-owned files.
           sudo tar -I 'zstd -T0 -3' -cpf cache.tar.zst -C "$WORK_DIR" --numeric-owner stage0 stage1 stage2
           echo "  Archive size: $(du -sh cache.tar.zst | cut -f1)"
           echo "Uploading to $CACHE_OBJ ..."
@@ -308,16 +263,10 @@ jobs:
           echo "Base cache uploaded - subsequent builds on any runner will skip stages 0-2."
 
       - name: Save apt cache to R2
-        # Best-effort: a failed cache upload must never fail a release.
         if: success() && steps.apt-proxy.outputs.url != ''
         continue-on-error: true
         run: |
           MP=$(docker volume inspect -f '{{.Mountpoint}}' apt-cacher-ng-cache)
-          # zstd -1: the cached .debs are already compressed, higher levels
-          # only burn CPU. --warning=no-file-changed because apt-cacher-ng
-          # stays running while we archive; its exit 1 for changed files is
-          # tolerated, anything worse aborts (and is swallowed by
-          # continue-on-error above).
           sudo tar -I 'zstd -T0 -1' --warning=no-file-changed \
             -cf apt-cache.tar.zst -C "$MP" . || [ $? -eq 1 ]
           echo "apt cache archive: $(du -sh apt-cache.tar.zst | cut -f1)"
@@ -330,7 +279,6 @@ jobs:
           echo "Build Statistics:"
           echo "==================="
 
-          # Check cache hit rate and estimate time savings
           if [ "${{ steps.cache-setup.outputs.cache_hit }}" == "true" ]; then
             echo "Build type: INCREMENTAL (R2 base cache hit; stages 0-2 reused)"
             echo "Estimated time saved: ~30-40 minutes"
@@ -338,7 +286,6 @@ jobs:
             echo "Build type: FULL (base cache miss; stages 0-2 uploaded to R2)"
           fi
 
-          # Show stage sizes (pi-gen uses work/IMG_NAME/stage* structure)
           WORK_DIR="work/${{ env.IMG_NAME }}"
           echo ""
           echo "Stage sizes:"
@@ -346,13 +293,11 @@ jobs:
             if [ -d "$WORK_DIR/$stage" ]; then
               SIZE=$(sudo du -sh "$WORK_DIR/$stage" 2>/dev/null | cut -f1 || echo "N/A")
               SKIP=""
-              # SKIP markers live in the repo stage dir (build.sh checks there).
               [ -f "$stage/SKIP" ] && SKIP=" (skipped)"
               echo "  - $stage: $SIZE$SKIP"
             fi
           done
 
-          # Show build logs
           if [ -f deploy/build-docker.log ]; then
             echo ""
             echo "Build time:"
@@ -364,7 +309,6 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
 
-          # Find the generated image
           IMAGE_PATH=$(find deploy -name "*.zip" -o -name "*.img" -o -name "*.img.gz" -o -name "*.img.xz" | head -n 1)
 
           if [ -z "$IMAGE_PATH" ]; then
@@ -374,7 +318,6 @@ jobs:
 
           echo "Found image: $IMAGE_PATH"
 
-          # Get the file extension (handle compound extensions like .img.xz)
           FILENAME=$(basename "$IMAGE_PATH")
           if [[ "$FILENAME" == *.img.xz ]]; then
             EXT="img.xz"
@@ -386,14 +329,12 @@ jobs:
             EXT="${FILENAME##*.}"
           fi
 
-          # Rename to include version
           NEW_NAME="aircast-lite-arm64-${VERSION}.${EXT}"
           cp "$IMAGE_PATH" "$NEW_NAME"
 
           echo "image_path=$NEW_NAME" >> $GITHUB_OUTPUT
           echo "image_name=$NEW_NAME" >> $GITHUB_OUTPUT
 
-          # Create checksums
           sha256sum "$NEW_NAME" > "${NEW_NAME}.sha256"
 
           echo "Prepared artifact: $NEW_NAME"
@@ -412,38 +353,31 @@ jobs:
           echo "Cleaning up build artifacts to free disk space..."
           echo "Note: the incremental base cache lives in R2, so work/ is safe to remove"
 
-          # Remove pi-gen work directory (9GB+). The base stages were already
-          # archived to R2 by the "Save base cache" step; this is just scratch.
           if [ -d "work" ]; then
             echo "Removing work directory..."
             sudo rm -rf work/
             echo "  Work directory removed"
           fi
 
-          # Remove deploy directory (build outputs already uploaded)
           if [ -d "deploy" ]; then
             echo "Removing deploy directory..."
             rm -rf deploy/
             echo "  Deploy directory removed"
           fi
 
-          # Stop and remove pi-gen container
           echo "Cleaning up Docker containers..."
           docker rm -f pigen_work 2>/dev/null && echo "  Removed pigen_work container" || true
           docker rm -f pigen_work_cont 2>/dev/null && echo "  Removed pigen_work_cont container" || true
 
-          # Remove dangling Docker volumes (pi-gen creates anonymous volumes)
           echo "Cleaning up Docker volumes..."
           DANGLING_VOLUMES=$(docker volume ls -qf dangling=true)
           if [ -n "$DANGLING_VOLUMES" ]; then
             docker volume rm $DANGLING_VOLUMES 2>/dev/null && echo "  Removed dangling volumes" || true
           fi
 
-          # Prune unused Docker resources (excludes named volumes used by other services)
           echo "Pruning unused Docker resources..."
           docker system prune -f 2>/dev/null || true
 
-          # Show disk usage after cleanup
           echo ""
           echo "Disk usage after cleanup:"
           df -h / | tail -1
@@ -458,8 +392,6 @@ jobs:
     steps:
       - name: Clean workspace
         run: |
-          # Self-hosted runner: remove any leftover artifacts from previous runs
-          # so globs and downloads only see files from the current build.
           rm -f aircast-lite-arm64-* *.img *.img.xz *.img.gz *.zip *.sha256 || true
 
       - name: Download artifacts
@@ -541,7 +473,6 @@ jobs:
           DISTRIBUTION="${{ needs.prepare.outputs.distribution }}"
           echo "Fetching release assets for $VERSION ($DISTRIBUTION)..."
 
-          # Get release info
           RELEASE_INFO=$(gh api repos/${{ github.repository }}/releases/tags/$VERSION)
           RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
           RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.html_url')
@@ -550,33 +481,24 @@ jobs:
 
           echo "Found release: $RELEASE_URL"
 
-          # Create clean temp directory for downloads
-          # Self-hosted runner: ensure no stale files from previous runs
           rm -rf temp-assets
           mkdir -p temp-assets
           cd temp-assets
 
-          # Download only assets matching the current version.
-          # Pattern matching guards against any stale assets that might have been
-          # attached to this release by earlier failed/partial runs.
           echo "Downloading release assets for $VERSION..."
           gh release download "$VERSION" -R ${{ github.repository }} \
             --pattern "${{ needs.build.outputs.image_name }}" \
             --pattern "${{ needs.build.outputs.image_name }}.sha256"
 
-          # Upload to R2 (one bucket per channel)
           S3_PATH="s3://aircast-artifacts-$DISTRIBUTION/lite"
           echo "Uploading to R2 ($S3_PATH)..."
 
-          # Determine downloads domain based on distribution
-          # Each channel is its own R2 bucket served at the domain root,
-          # so URLs don't include the distribution in the path
           case "$DISTRIBUTION" in
             "development")
               DOWNLOADS_DOMAIN="downloads-dev.aircast.one"
               ;;
             "staging")
-              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              DOWNLOADS_DOMAIN="downloads-stage.aircast.one"
               ;;
             *)
               DOWNLOADS_DOMAIN="downloads.aircast.one"
@@ -584,21 +506,18 @@ jobs:
           esac
           URL_PATH="lite"
 
-          # Upload all image files and checksums with verification
           UPLOAD_FAILED=false
           for file in aircast-lite-arm64-*; do
             if [ -f "$file" ]; then
               echo "Uploading: $file"
               LOCAL_SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
 
-              # Upload with checksum verification
               if ! aws s3 cp "$file" "$S3_PATH/$VERSION/$file"; then
                 echo "[ERROR] Failed to upload $file"
                 UPLOAD_FAILED=true
                 continue
               fi
 
-              # Verify upload by checking file exists and size matches
               REMOTE_SIZE=$(aws s3api head-object --bucket "aircast-artifacts-$DISTRIBUTION" --key "lite/$VERSION/$file" --query 'ContentLength' --output text 2>/dev/null || echo "0")
               if [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
                 echo "[ERROR] Size mismatch for $file: local=$LOCAL_SIZE, remote=$REMOTE_SIZE"
@@ -614,11 +533,8 @@ jobs:
             exit 1
           fi
 
-          # Update releases.json (single source of truth for all versions)
           echo "Updating releases.json..."
 
-          # Select the image by exact version match — never by filesystem sort/size,
-          # which is fragile if stale files are ever present.
           MAIN_IMAGE="${{ needs.build.outputs.image_name }}"
           if [ ! -f "$MAIN_IMAGE" ]; then
             echo "[ERROR] Expected image file not found: $MAIN_IMAGE"
@@ -628,7 +544,6 @@ jobs:
 
           IMAGE_SIZE=$(stat -f%z "$MAIN_IMAGE" 2>/dev/null || stat -c%s "$MAIN_IMAGE")
 
-          # Extract extension using pattern matching
           if [[ "$MAIN_IMAGE" == *.img.xz ]]; then
             IMAGE_EXTENSION="img.xz"
           elif [[ "$MAIN_IMAGE" == *.img.gz ]]; then
@@ -646,7 +561,6 @@ jobs:
             exit 1
           fi
 
-          # Validate checksum file exists (should always be generated in Prepare artifacts step)
           CHECKSUM_FILE="${MAIN_IMAGE}.sha256"
           if [ ! -f "$CHECKSUM_FILE" ]; then
             echo "[ERROR] Checksum file not found: $CHECKSUM_FILE"
@@ -655,7 +569,6 @@ jobs:
 
           echo "Image: $MAIN_IMAGE (extension: $IMAGE_EXTENSION, size: $IMAGE_SIZE)"
 
-          # Fetch existing releases.json from R2 directly (bypass CDN cache)
           S3_KEY="lite/releases.json"
 
           if aws s3 cp "s3://aircast-artifacts-$DISTRIBUTION/$S3_KEY" existing-releases.json 2>/dev/null; then
@@ -665,7 +578,6 @@ jobs:
             echo '{"releases":[]}' > existing-releases.json
           fi
 
-          # Create new release entry using jq (no heredoc indentation issues)
           jq -n \
             --arg version "$VERSION" \
             --argjson prerelease "${{ needs.prepare.outputs.prerelease == 'true' }}" \
@@ -703,7 +615,6 @@ jobs:
 
           echo "Updated releases.json with $VERSION (total: $(jq '.releases | length' releases.json) releases)"
 
-          # Upload with retry on race condition
           MAX_RETRIES=3
           RETRY_COUNT=0
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
@@ -712,7 +623,6 @@ jobs:
               exit 1
             fi
 
-            # Verify upload succeeded by checking the file exists
             if aws s3api head-object --bucket "aircast-artifacts-$DISTRIBUTION" --key "$S3_KEY" > /dev/null 2>&1; then
               echo "[OK] releases.json uploaded successfully"
               break
@@ -734,7 +644,6 @@ jobs:
 
           cd ..
           rm -rf temp-assets
-
 
   notify:
     needs: [prepare, build, release, mirror-to-s3]
@@ -760,13 +669,12 @@ jobs:
           echo "- **R2 Mirror:** ${{ needs.mirror-to-s3.result == 'success' && 'Success' || needs.mirror-to-s3.result == 'skipped' && 'Skipped' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Determine downloads domain based on distribution
           case "$DISTRIBUTION" in
             "development")
               DOWNLOADS_DOMAIN="downloads-dev.aircast.one"
               ;;
             "staging")
-              DOWNLOADS_DOMAIN="downloads.stage.aircast.one"
+              DOWNLOADS_DOMAIN="downloads-stage.aircast.one"
               ;;
             *)
               DOWNLOADS_DOMAIN="downloads.aircast.one"
