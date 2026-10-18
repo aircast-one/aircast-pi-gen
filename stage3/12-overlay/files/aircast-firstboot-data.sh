@@ -81,8 +81,8 @@ if [ -f "$ENCRYPT_MARKER" ]; then
 	echo "$DATA_LABEL UUID=$uuid none luks,initramfs" >/etc/crypttab
 
 	CMDLINE=/boot/firmware/cmdline.txt
-	if [ -f "$CMDLINE" ] && ! grep -qw 'ip=dhcp' "$CMDLINE"; then
-		sed -i 's/$/ ip=dhcp/' "$CMDLINE"
+	if [ -f "$CMDLINE" ] && ! grep -qE '(^| )ip=' "$CMDLINE"; then
+		sed -i 's/$/ ip=::::::dhcp/' "$CMDLINE"
 	fi
 
 	if [ -n "${WIFI_SSID_HEX:-}" ] && [ -n "${WIFI_PSK:-}" ]; then
@@ -99,7 +99,7 @@ WPAEOF
 		log "wifi creds staged for initramfs unlock (wlan0)"
 	fi
 
-	update-initramfs -u
+	update-initramfs -c -k all
 
 	rm -f "$ENCRYPT_MARKER"
 	sync
