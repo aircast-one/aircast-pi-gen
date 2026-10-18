@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -d /boot/firmware ] || exit 0
+cp "$2" /boot/firmware/initramfs8
+cp "/boot/vmlinuz-$1" /boot/firmware/kernel8.img

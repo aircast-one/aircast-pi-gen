@@ -1,0 +1,1 @@
+console=ttyAMA0 root=LABEL=rootfs rootfstype=ext4 rootwait

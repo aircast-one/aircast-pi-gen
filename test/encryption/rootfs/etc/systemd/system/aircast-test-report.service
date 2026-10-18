@@ -1,0 +1,11 @@
+[Unit]
+Description=Aircast encryption test report
+ConditionKernelCommandLine=aircast.test
+After=local-fs.target aircast-firstboot-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aircast-test-report
+
+[Install]
+WantedBy=multi-user.target

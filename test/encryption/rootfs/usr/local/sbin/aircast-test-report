@@ -1,0 +1,18 @@
+#!/bin/sh
+param() { tr ' ' '\n' </proc/cmdline | sed -n "s/^aircast\.test\.$1=//p"; }
+write=$(param write)
+if [ -n "$write" ]; then
+	mkdir -p /var/lib/aircast-test
+	printf '%s' "$write" >/var/lib/aircast-test/probe
+	sync
+fi
+probe=$(cat /var/lib/aircast-test/probe 2>/dev/null || true)
+root_fs=$(findmnt -no FSTYPE /)
+data_src=$(findmnt -no SOURCE /data 2>/dev/null || true)
+luks=$(cryptsetup status data >/dev/null 2>&1 && echo yes || echo no)
+marker=$([ -e /boot/firmware/aircast-encrypt ] && echo yes || echo no)
+crypttab=$(awk '$1=="data"{print $4}' /etc/crypttab 2>/dev/null)
+ip=$(tr ' ' '\n' </boot/firmware/cmdline.txt | sed -n 's/^ip=//p')
+printf 'AIRCAST-TEST-REPORT root_fs=%s data_src=%s luks=%s marker=%s crypttab=%s ip=%s probe=%s\n' \
+	"$root_fs" "${data_src:-none}" "$luks" "$marker" "${crypttab:-none}" "${ip:-none}" "${probe:-none}" >/dev/ttyAMA0
+systemctl --no-block poweroff
