@@ -222,7 +222,7 @@ def lifecycle(image, results):
            bool(second.report()) and not second.timed_out, "did not finish booting without a typed key")
     expect_report(results, "data partition is the LUKS mapper under the overlay", second,
                   root_fs="overlay", data_src="/dev/mapper/data", luks="yes",
-                  marker="no", crypttab="luks,initramfs", ip="::::::dhcp", probe=token)
+                  marker="no", crypttab="luks,initramfs", ip="::::::dhcp", cmdline_ip="none", probe=token)
     expect(results, "the boot log on the card records the unattended unlock",
            "data partition unlocked" in boot_log(card), "no unlock entry in aircast-boot.log")
 

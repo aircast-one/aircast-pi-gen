@@ -13,7 +13,9 @@ echo "data_src=$(findmnt -no SOURCE /data 2>/dev/null || echo none)"
 echo "luks=$(sudo -n cryptsetup status data >/dev/null 2>&1 && echo yes || echo no)"
 echo "marker=$([ -e /boot/firmware/aircast-encrypt ] && echo yes || echo no)"
 echo "crypttab=$(awk '$1=="data"{print $4}' /etc/crypttab 2>/dev/null)"
-echo "ip=$(tr ' ' '\n' </boot/firmware/cmdline.txt | sed -n 's/^ip=//p')"
+echo "ip=$(sed -n 's/^IP=//p' /etc/initramfs-tools/conf.d/aircast-ip 2>/dev/null)"
+echo "cmdline_ip=$(tr ' ' '\n' </boot/firmware/cmdline.txt | sed -n 's/^ip=//p' | grep . || echo none)"
+echo "initramfs_usb_ethernet=$(has r8152.ko)"
 echo "initramfs=$initramfs"
 echo "initramfs_crypttab=$(has cryptroot/crypttab)"
 echo "initramfs_clevis=$(has clevis-decrypt-sss)"
@@ -36,7 +38,7 @@ def facts(host):
 
 def expectations(wifi, cloud):
     base = {"root_fs": "overlay", "data_src": "/dev/mapper/data", "luks": "yes", "marker": "no",
-            "crypttab": "luks,initramfs", "ip": "::::::dhcp",
+            "crypttab": "luks,initramfs", "ip": "::::::dhcp", "cmdline_ip": "none", "initramfs_usb_ethernet": "yes",
             "initramfs_crypttab": "yes", "initramfs_clevis": "yes"}
     return {**base,
             **({"initramfs_curlrc": "yes"} if cloud else {}),

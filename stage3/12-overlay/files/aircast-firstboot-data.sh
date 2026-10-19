@@ -80,10 +80,7 @@ if [ -f "$ENCRYPT_MARKER" ]; then
 	uuid=$(blkid -s UUID -o value "$data_part")
 	echo "$DATA_LABEL UUID=$uuid none luks,initramfs" >/etc/crypttab
 
-	CMDLINE=/boot/firmware/cmdline.txt
-	if [ -f "$CMDLINE" ] && ! grep -qE '(^| )ip=' "$CMDLINE"; then
-		sed -i 's/$/ ip=::::::dhcp/' "$CMDLINE"
-	fi
+	echo 'IP=::::::dhcp' >/etc/initramfs-tools/conf.d/aircast-ip
 
 	if [ -n "${WIFI_SSID_HEX:-}" ] && [ -n "${WIFI_PSK:-}" ]; then
 		install -d -m 700 /etc/wpa_supplicant

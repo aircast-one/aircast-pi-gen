@@ -12,4 +12,5 @@ copy_exec /sbin/modprobe /sbin 2>/dev/null || true
 if [ -s /etc/crypttab ]; then
 	echo insecure >"${DESTDIR}/.curlrc"
 	manual_add_modules vc4 cdc_acm
+	manual_add_modules r8152 asix ax88179_178a cdc_ether rndis_host lan78xx smsc95xx macb
 fi
