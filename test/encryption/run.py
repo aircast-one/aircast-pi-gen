@@ -118,6 +118,25 @@ def extract_boot(card):
     return out
 
 
+def mtools(card, tool, *args, check=True):
+    return subprocess.run(["docker", "run", "--rm", "-e", "MTOOLS_SKIP_CHECK=1", "-v", f"{WORK}:/w", BUILDER,
+                           tool, "-i", f"/w/{card.name}@@{fat_offset(card)}", *args], capture_output=True, check=check)
+
+
+def boot_log(card):
+    out = mtools(card, "mtype", "::aircast-boot.log", check=False)
+    return out.stdout.decode(errors="replace") if out.returncode == 0 else ""
+
+
+def fight_mode(card, on):
+    flag = WORK / "fight-flag"
+    flag.touch()
+    if on:
+        mtools(card, "mcopy", "-o", f"/w/{flag.name}", "::aircast-fight-mode")
+    else:
+        mtools(card, "mdel", "::aircast-fight-mode")
+
+
 def boot(card, extra, name, answer=None, hold=60, timeout=1800, dead_nic=False):
     files = extract_boot(card)
     cmdline = (files / "cmdline.txt").read_text().strip() + (" " + extra if extra else "")
@@ -204,9 +223,15 @@ def lifecycle(image, results):
     expect_report(results, "data partition is the LUKS mapper under the overlay", second,
                   root_fs="overlay", data_src="/dev/mapper/data", luks="yes",
                   marker="no", crypttab="luks,initramfs", ip="::::::dhcp", probe=token)
+    expect(results, "the boot log on the card records the unattended unlock",
+           "data partition unlocked" in boot_log(card), "no unlock entry in aircast-boot.log")
 
+    fight_mode(card, True)
     third = boot(card, "aircast.test=1", "encrypted-3-reboot")
     expect_report(results, "data written last boot survives a reboot", third, luks="yes", probe=token)
+    expect(results, "fight mode leaves no boot log on the card", boot_log(card) == "",
+           "aircast-boot.log is still on a fight-mode card")
+    fight_mode(card, False)
     expect(results, "written data is not readable on the raw card", not on_card(card, token),
            "plaintext probe found in card image")
 
@@ -215,6 +240,10 @@ def lifecycle(image, results):
     expect(results, "with Tang unreachable it waits at the prompt and does not unlock on its own",
            fourth.held, "booted past the prompt before the key was typed" if fourth.prompted else "no prompt")
     expect_report(results, "recovery key unlocks and the data is intact", fourth, luks="yes", probe=token)
+    log = boot_log(card)
+    expect(results, "the boot log shows the wait for Tang, then the unlock",
+           "waiting for the data partition" in log and f"tang {TANG_FROM_GUEST}" in log and "data partition unlocked" in log,
+           "see aircast-boot.log on .work/card-encrypted.img")
 
 
 def plain(image, results):

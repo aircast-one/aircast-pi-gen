@@ -1,0 +1,69 @@
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+[ -s /cryptroot/crypttab ] || exit 0
+
+LOG=/run/aircast-boot.log
+STOP=/run/aircast-bootlog.stop
+DONE=/run/aircast-bootlog.done
+MNT=/run/aircast-bootlog
+
+uptime_s() { cut -d. -f1 /proc/uptime; }
+
+tang_urls() {
+	dev=$(findfs "$(awk '$1=="data"{print $2}' /cryptroot/crypttab)" 2>/dev/null) || return 0
+	clevis luks list -d "$dev" 2>/dev/null | grep -o '"url":"[^"]*"' | cut -d'"' -f4
+}
+
+snapshot() {
+	{
+		echo "=== $1 at $(uptime_s)s"
+		for n in /sys/class/net/*; do
+			echo "net ${n##*/} $(cat "$n/operstate" 2>/dev/null)"
+		done
+		cat /run/net-*.conf 2>/dev/null | grep -E '^(DEVICE|IPV4ADDR|IPV4GATEWAY|IPV4DNS0)='
+		sed 's/^/resolv /' /etc/resolv.conf 2>/dev/null
+		wpa_cli -i wlan0 status 2>/dev/null | grep -E '^(wpa_state|ssid|bssid|freq|key_mgmt|ip_address)='
+		if [ "$2" = probe ]; then
+			wpa_cli -i wlan0 scan_results 2>/dev/null | head -15
+			for url in $(tang_urls); do
+				echo "tang $url $(curl -sk -m 8 -o /dev/null -w '%{http_code} %{time_total}s' "$url/adv" 2>&1)"
+			done
+		fi
+		ps | grep -E 'clevis|curl|cryptsetup|askpass|ipconfig|wpa_supplicant' | grep -v grep
+		dmesg | grep -iE 'brcmf|wlan0|cfg80211|ieee80211|firmware|vc4|crypt' | tail -30
+	} >>"$LOG" 2>&1
+}
+
+flush() {
+	dev=$(findfs LABEL=bootfs 2>/dev/null) || return 0
+	mkdir -p "$MNT"
+	mount -t vfat -o rw "$dev" "$MNT" 2>/dev/null || return 0
+	if [ -e "$MNT/aircast-fight-mode" ]; then
+		rm -f "$MNT/aircast-boot.log"
+		umount "$MNT"
+		return 1
+	fi
+	cp "$LOG" "$MNT/aircast-boot.log"
+	sync
+	umount "$MNT"
+}
+
+witness() {
+	for at in 15 30 60 120 300; do
+		while [ "$(uptime_s)" -lt "$at" ] && [ ! -e "$STOP" ]; do sleep 1; done
+		[ -e "$STOP" ] && break
+		snapshot "waiting for the data partition" probe
+		flush || { touch "$DONE"; return; }
+	done
+	while [ ! -e "$STOP" ]; do sleep 1; done
+	snapshot "data partition unlocked"
+	flush
+	touch "$DONE"
+}
+
+witness </dev/null >/dev/null 2>&1 &
+echo $! >/run/aircast-bootlog.pid
+exit 0

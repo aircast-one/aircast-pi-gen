@@ -6,6 +6,8 @@ install -D -m 644 files/aircast-firstboot-data.service "${ROOTFS_DIR}/etc/system
 install -D -m 755 files/initramfs-scripts/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-overlay"
 install -D -m 755 files/initramfs-hooks/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-overlay"
 
+install -D -m 755 files/initramfs-scripts/aircast-bootlog "${ROOTFS_DIR}/etc/initramfs-tools/scripts/init-premount/aircast-bootlog"
+install -D -m 755 files/initramfs-scripts/aircast-bootlog-stop "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-bootlog-stop"
 install -D -m 755 files/initramfs-scripts/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/scripts/init-premount/aircast-wifi"
 install -D -m 755 files/initramfs-scripts/aircast-wifi-stop "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-wifi-stop"
 install -D -m 755 files/initramfs-hooks/aircast-wifi "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-wifi"

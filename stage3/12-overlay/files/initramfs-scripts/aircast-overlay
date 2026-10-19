@@ -1,5 +1,5 @@
 #!/bin/sh
-PREREQ=""
+PREREQ="aircast-bootlog-stop"
 prereqs() { echo "$PREREQ"; }
 case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
 

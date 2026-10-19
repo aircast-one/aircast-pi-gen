@@ -1,0 +1,15 @@
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+[ -s /run/aircast-bootlog.pid ] || exit 0
+touch /run/aircast-bootlog.stop
+i=0
+while [ ! -e /run/aircast-bootlog.done ] && [ "$i" -lt 30 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+kill "$(cat /run/aircast-bootlog.pid)" 2>/dev/null || true
+rm -f /run/aircast-bootlog.pid
+exit 0
