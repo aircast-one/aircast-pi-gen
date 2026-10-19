@@ -51,14 +51,42 @@ flush() {
 	umount "$MNT"
 }
 
+kvm_port() {
+	for tty in /sys/class/tty/ttyACM*; do
+		[ "$(cat "$tty/device/../manufacturer" 2>/dev/null)" = JetKVM ] && echo "/dev/${tty##*/}" && return
+	done
+}
+
+kvm_send() {
+	port=$(kvm_port)
+	[ -c "$port" ] || return 0
+	stty -F "$port" raw -echo 2>/dev/null
+	timeout 10 cat "$port" >/dev/null 2>&1 &
+	drain=$!
+	{
+		echo START
+		echo "AIRCAST-KVM name=aircast-boot.log size=$(wc -c <"$LOG" | tr -d ' ') sha256=$(sha256sum "$LOG" | cut -d' ' -f1)"
+		gzip -c "$LOG" | base64
+		echo END
+	} | timeout 8 cat >"$port"
+	kill "$drain" 2>/dev/null
+}
+
 witness() {
 	for at in 15 30 60 120 300; do
 		while [ "$(uptime_s)" -lt "$at" ] && [ ! -e "$STOP" ]; do sleep 1; done
 		[ -e "$STOP" ] && break
 		snapshot "waiting for the data partition" probe
 		flush || { touch "$DONE"; return; }
+		kvm_send
 	done
-	while [ ! -e "$STOP" ]; do sleep 1; done
+	resend=$(($(uptime_s) + 60))
+	while [ ! -e "$STOP" ]; do
+		sleep 1
+		[ "$(uptime_s)" -ge "$resend" ] || continue
+		kvm_send
+		resend=$(($(uptime_s) + 60))
+	done
 	snapshot "data partition unlocked"
 	flush
 	touch "$DONE"
