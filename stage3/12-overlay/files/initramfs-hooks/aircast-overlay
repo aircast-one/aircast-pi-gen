@@ -5,7 +5,7 @@ case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-manual_add_modules overlay
+manual_add_modules overlay vfat nls_cp437 nls_ascii nls_utf8
 copy_exec /sbin/findfs /sbin
 copy_exec /sbin/modprobe /sbin 2>/dev/null || true
 
