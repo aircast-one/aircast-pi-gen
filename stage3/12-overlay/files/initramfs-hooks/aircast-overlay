@@ -9,6 +9,6 @@ manual_add_modules overlay
 copy_exec /sbin/findfs /sbin
 copy_exec /sbin/modprobe /sbin 2>/dev/null || true
 
-if [ -s /etc/crypttab ] && [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-	copy_file cacert /etc/ssl/certs/ca-certificates.crt
+if [ -s /etc/crypttab ]; then
+	echo insecure >"${DESTDIR}/.curlrc"
 fi

@@ -17,7 +17,7 @@ echo "ip=$(tr ' ' '\n' </boot/firmware/cmdline.txt | sed -n 's/^ip=//p')"
 echo "initramfs=$initramfs"
 echo "initramfs_crypttab=$(has cryptroot/crypttab)"
 echo "initramfs_clevis=$(has clevis-decrypt-sss)"
-echo "initramfs_ca=$(has etc/ssl/certs/ca-certificates.crt)"
+echo "initramfs_curlrc=$(has .curlrc)"
 echo "initramfs_wifi_conf=$(has aircast-initramfs.conf)"
 echo "initramfs_brcmfmac=$(has brcmfmac.ko)"
 echo "initramfs_brcmfmac_vendor=$(has brcmfmac-wcc.ko)"
@@ -39,7 +39,7 @@ def expectations(wifi, cloud):
             "crypttab": "luks,initramfs", "ip": "::::::dhcp",
             "initramfs_crypttab": "yes", "initramfs_clevis": "yes"}
     return {**base,
-            **({"initramfs_ca": "yes"} if cloud else {}),
+            **({"initramfs_curlrc": "yes"} if cloud else {}),
             **({"wifi_staged": "yes", "initramfs_wifi_conf": "yes",
                 "initramfs_brcmfmac": "yes", "initramfs_brcmfmac_vendor": "yes", "initramfs_brcm_fw": "yes",
                 "initramfs_supplicant_left": "no"} if wifi else {})}
