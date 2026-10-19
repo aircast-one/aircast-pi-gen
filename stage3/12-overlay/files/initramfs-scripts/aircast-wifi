@@ -21,6 +21,9 @@ if [ ! -d /sys/class/net/wlan0 ]; then
 	exit 0
 fi
 
+for r in /sys/class/rfkill/rfkill*; do
+	[ "$(cat "$r/type" 2>/dev/null)" = wlan ] && echo 0 >"$r/soft"
+done
 ip link set wlan0 up 2>/dev/null || true
 mkdir -p /run/wpa_supplicant
 wpa_supplicant -B -P /run/aircast-wifi.pid -Dnl80211,wext -i wlan0 -c "$CONF" 2>/dev/null \
