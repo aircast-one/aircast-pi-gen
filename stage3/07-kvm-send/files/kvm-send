@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+import gzip
+import hashlib
+import os
+import select
+import struct
+import subprocess
+import sys
+import threading
+import time
+import tty
+import zlib
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+LINE = 3000
+QR_MAGIC = b"AQ"
+QR_HEADER = struct.Struct(">2sHHHI")
+QR_CAPACITY_L = 2953
+QR_SIDE = 177
+FB = Path("/sys/class/graphics/fb0")
+
+
+def jetkvm_port():
+    return next(iter(sorted(Path("/dev/serial/by-id").glob("usb-JetKVM_*"))), None)
+
+
+def serial_frame(name, data):
+    payload = base64.b64encode(gzip.compress(data, 6))
+    header = f"AIRCAST-KVM name={name} size={len(data)} sha256={hashlib.sha256(data).hexdigest()}"
+    body = b"\n".join(payload[i:i + LINE] for i in range(0, len(payload), LINE))
+    return b"START\n" + header.encode() + b"\n" + body + b"\nEND\n"
+
+
+def drain(fd, stop):
+    while not stop.is_set():
+        if select.select([fd], [], [], 0.2)[0]:
+            os.read(fd, 65536)
+
+
+def send_serial(port, name, data):
+    fd = os.open(port, os.O_RDWR | os.O_NOCTTY)
+    tty.setraw(fd)
+    stop = threading.Event()
+    reader = threading.Thread(target=drain, args=(fd, stop), daemon=True)
+    reader.start()
+    frame = memoryview(serial_frame(name, data))
+    sent = 0
+    while sent < len(frame):
+        sent += os.write(fd, frame[sent:])
+    time.sleep(1)
+    stop.set()
+    reader.join()
+    os.close(fd)
+    print(f"sent {name}: {len(data)} bytes as {len(frame)} over {port}", flush=True)
+
+
+def qr_matrix(payload):
+    art = subprocess.run(
+        ["qrencode", "-8", "-l", "L", "-v", "40", "-m", "0", "-t", "ASCII", "-o", "-"],
+        input=payload, capture_output=True, check=True,
+    ).stdout.decode()
+    return [[line[i] == "#" for i in range(0, len(line), 2)] for line in art.splitlines() if line]
+
+
+def qr_slots(width, height, module, top):
+    quiet = 4 * module
+    cell = QR_SIDE * module + quiet
+    return [
+        (quiet + c * cell, top + quiet + r * cell)
+        for r in range((height - top - quiet) // cell)
+        for c in range((width - quiet) // cell)
+    ]
+
+
+def qr_screen(blank, stride, bpp, places, grids, module):
+    screen = bytearray(blank)
+    white, black = b"\xff" * bpp * module, b"\x00" * bpp * module
+    for (x0, y0), grid in zip(places, grids):
+        for r, row in enumerate(grid):
+            line = b"".join(black if dark else white for dark in row)
+            for k in range(module):
+                start = (y0 + r * module + k) * stride + x0 * bpp
+                screen[start:start + len(line)] = line
+    return bytes(screen)
+
+
+def send_qr(data, module, dwell, rounds):
+    packed = zlib.compress(data, 9)
+    crc = zlib.crc32(packed)
+    size = QR_CAPACITY_L - QR_HEADER.size
+    parts = [packed[i:i + size] for i in range(0, len(packed), size)] or [b""]
+    payloads = [QR_HEADER.pack(QR_MAGIC, crc & 0xFFFF, i, len(parts), crc) + p for i, p in enumerate(parts)]
+    with ThreadPoolExecutor(os.cpu_count() or 1) as pool:
+        grids = list(pool.map(qr_matrix, payloads))
+    width, height = (int(v) for v in (FB / "virtual_size").read_text().split(","))
+    stride = int((FB / "stride").read_text())
+    bpp = int((FB / "bits_per_pixel").read_text()) // 8
+    places = qr_slots(width, height, module, 24)
+    if not places:
+        sys.exit("the screen is too small for a QR code at this module size")
+    blank = b"\xff" * stride * height
+    frames = [qr_screen(blank, stride, bpp, places, grids[i:i + len(places)], module) for i in range(0, len(grids), len(places))]
+    print(f"showing {len(parts)} QR codes on {len(frames)} frames; stop with Ctrl-C", flush=True)
+    fd = os.open("/dev/fb0", os.O_WRONLY)
+    passes = 0
+    while rounds == 0 or passes < rounds:
+        for frame in frames:
+            shown = time.monotonic()
+            os.pwrite(fd, frame, 0)
+            time.sleep(max(0.0, dwell - (time.monotonic() - shown)))
+        passes += 1
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Send a file to the Mac through a JetKVM: USB serial when the KVM offers it, else QR codes on HDMI.")
+    ap.add_argument("file", help="file to send, or - for stdin")
+    ap.add_argument("--name", help="name the receiver saves it under (default: the file's name)")
+    ap.add_argument("--qr", action="store_true", help="use QR codes on the HDMI framebuffer even if USB serial is there")
+    ap.add_argument("--module", type=int, default=4, help="QR: pixels per module (4 lines up with H.264 blocks)")
+    ap.add_argument("--dwell", type=float, default=0.06, help="QR: seconds each frame stays on screen")
+    ap.add_argument("--rounds", type=int, default=0, help="QR: passes before stopping (0 = until Ctrl-C)")
+    args = ap.parse_args()
+
+    data = sys.stdin.buffer.read() if args.file == "-" else Path(args.file).read_bytes()
+    name = args.name or ("stdin" if args.file == "-" else Path(args.file).name)
+    port = None if args.qr else jetkvm_port()
+    if port is None:
+        send_qr(data, args.module, args.dwell, args.rounds)
+    else:
+        send_serial(port, name, data)
+
+
+if __name__ == "__main__":
+    main()

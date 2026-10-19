@@ -77,6 +77,12 @@ release TYPE:
 test-release:
     ./scripts/release_test.sh
 
+# Receive a file a Pi sends with kvm-send, through the JetKVM at $JETKVM_URL (--qr reads HDMI instead of USB serial)
+[group('kvm')]
+kvm-recv *ARGS:
+    docker build -q -t aircast-kvm-recv tools/kvm-recv >/dev/null
+    docker run --rm -e JETKVM_URL -e JETKVM_PASSWORD -v "{{invocation_directory()}}:/out" aircast-kvm-recv {{ARGS}}
+
 # Fail if a stage sub-script isn't named NN-run.sh / NN-run-chroot.sh (CI gate)
 [group('lint')]
 lint-stage-scripts:
