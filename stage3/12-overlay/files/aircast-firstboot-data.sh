@@ -35,7 +35,7 @@ if [ ! -b "$data_part" ]; then
 		exit 0
 	fi
 	log "creating data partition: sectors ${start}..${end} (~${free_mb}MB)"
-	parted -s -a optimal "$disk" mkpart primary ext4 "${start}s" "${end}s"
+	parted -s --fix -a optimal "$disk" mkpart primary ext4 "${start}s" 100%
 	created=1
 fi
 
@@ -50,12 +50,12 @@ if [ ! -b "$data_part" ]; then
 	exit 0
 fi
 
+ENCRYPT_MARKER="$(findmnt -n -o TARGET -S LABEL=bootfs || true)/aircast-encrypt"
 if [ "$created" -eq 0 ] && blkid "$data_part" >/dev/null 2>&1 \
-	&& [ ! -f /boot/firmware/aircast-encrypt ]; then
+	&& [ ! -f "$ENCRYPT_MARKER" ]; then
 	log "refusing to format $data_part: it already has a filesystem"
 	exit 0
 fi
-ENCRYPT_MARKER=/boot/firmware/aircast-encrypt
 if [ -f "$ENCRYPT_MARKER" ]; then
 	# shellcheck disable=SC1090
 	. "$ENCRYPT_MARKER"
