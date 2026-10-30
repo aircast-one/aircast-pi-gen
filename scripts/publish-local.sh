@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL_PATH="lite"
+URL_PATH="${URL_PATH:-lite}"
 
 export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-https://cb3f7d95c2d311b22c4e57e0759d3a13.r2.cloudflarestorage.com}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
@@ -86,7 +86,7 @@ case "$IMAGE_PATH" in
     *)        EXT="${IMAGE_PATH##*.}" ;;
 esac
 
-ASSET="aircast-lite-arm64-${VERSION}.${EXT}"
+ASSET="${ASSET_PREFIX:-aircast-lite-arm64}-${VERSION}.${EXT}"
 CHECKSUM="${ASSET}.sha256"
 
 echo "Image:        $IMAGE_PATH"
@@ -141,6 +141,11 @@ cp "$IMAGE_PATH" "${WORK}/${ASSET}"
 ( cd "$WORK" && sha256_of "$ASSET" > "$CHECKSUM" )
 
 IMAGE_SIZE=$(size_of "${WORK}/${ASSET}")
+case "$EXT" in
+    img.xz) UNCOMPRESSED_SIZE=$(xz --robot --list "$IMAGE_PATH" | awk '$1 == "totals" {print $5}') ;;
+    img)    UNCOMPRESSED_SIZE="$IMAGE_SIZE" ;;
+    *)      UNCOMPRESSED_SIZE=null ;;
+esac
 CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 aws s3 cp "${WORK}/${ASSET}"    "${S3_PATH}/${VERSION}/${ASSET}"
@@ -166,10 +171,12 @@ jq -n \
     --arg filename "$ASSET" \
     --arg extension "$EXT" \
     --argjson size "$IMAGE_SIZE" \
+    --argjson uncompressed_size "$UNCOMPRESSED_SIZE" \
     --arg download_url "https://${DOWNLOADS_DOMAIN}/${URL_PATH}/${VERSION}/${ASSET}" \
     --arg checksum_url "https://${DOWNLOADS_DOMAIN}/${URL_PATH}/${VERSION}/${CHECKSUM}" \
     '{version: $version, prerelease: $prerelease, created_at: $created_at,
       image: {filename: $filename, extension: $extension, size: $size,
+              uncompressed_size: $uncompressed_size,
               download_url: $download_url, checksum_url: $checksum_url}}' \
     > "${WORK}/new.json"
 
