@@ -36,11 +36,6 @@ build VERSION="" AIRCASTD="":
         ./build-local.sh aircastd
     fi
 
-# Upload the newest deploy/ image to the channel its version implies (--force replaces an already published version)
-[group('release')]
-publish VERSION *ARGS:
-    ./scripts/publish-local.sh {{VERSION}} {{ARGS}}
-
 # Start the apt-cacher-ng container (caches .deb downloads across builds)
 [group('cache')]
 cache:
