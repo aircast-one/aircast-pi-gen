@@ -1,0 +1,33 @@
+name: Mirror a release to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released tag to copy into its R2 catalog, e.g. v0.4.0-beta.2'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the release image
+        run: |
+          asset="aircast-lite-arm64-$VERSION.img.xz"
+          mkdir -p deploy
+          gh release download "$VERSION" -R "$GITHUB_REPOSITORY" -D deploy -p "$asset"
+          printf '%s %s\n' "$VERSION" "$asset" > deploy/.publish-version
+
+      - name: Publish to R2
+        run: ./scripts/publish-local.sh "$VERSION" --yes
