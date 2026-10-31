@@ -23,7 +23,7 @@ prod <version>:
   Reuses the cached base, rebuilds stage3 against the stable apt channel with
   the release provenance CI bakes in (IMAGE_VERSION / PI_GEN_REF / commit),
   xz-compressed. Pin aircastd with AIRCASTD_VERSION=vX.Y.Z; omit for
-  channel-latest.
+  channel-latest. Publish the result with ./scripts/publish-local.sh.
 
 Base mode (first arg, default: fast):
   full   Clean build of all stages. Run once to seed the cached work volume
@@ -143,6 +143,14 @@ build_prod() {
 	} >> "$PROD_CONFIG"
 	echo ">> PROD build ${version} (channel ${channel}, aircastd ${apt_channel:-$channel}/${AIRCASTD_VERSION:-channel-latest})"
 	BUILD_CONFIG="$PROD_CONFIG" build_fast
+
+	# Stamp what was just built so publish-local.sh ships exactly this image —
+	# never "newest file in deploy/", which can be a later dev build.
+	local img
+	img=$(ls -t deploy/*.img.xz deploy/*.img 2>/dev/null | head -1 || true)
+	[ -n "$img" ] || { echo "!! prod build produced no image in deploy/" >&2; exit 1; }
+	printf '%s %s\n' "$version" "$(basename "$img")" > deploy/.publish-version
+	echo ">> stamped deploy/.publish-version: ${version} $(basename "$img")"
 }
 
 case "${1:-}" in
