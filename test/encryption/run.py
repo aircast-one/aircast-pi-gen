@@ -205,6 +205,50 @@ def expect_report(results, step, boot, **want):
     return expect(results, step, bool(got) and not bad and not boot.timed_out, detail)
 
 
+def fake_aircastd(version):
+    root = WORK / "aircastd-pkg"
+    files = {
+        "DEBIAN/control": f"Package: aircastd\nVersion: {version}\nArchitecture: all\nMaintainer: test <test@aircast.one>\n"
+                          "Depends: bash, systemd\nRecommends: rpicam-apps-lite\nDescription: test aircastd\n",
+        "DEBIAN/postinst": "#!/bin/bash\nset -e\nsystemctl daemon-reload\nsystemctl enable aircastd.service\nsystemctl restart aircastd.service\n",
+        "etc/systemd/system/aircastd.service": "[Unit]\nAfter=network-online.target\nWants=network-online.target\n"
+                                               "[Service]\nExecStart=/usr/local/bin/aircastd\n[Install]\nWantedBy=multi-user.target\n",
+        "usr/local/bin/aircastd": f"#!/bin/sh\necho {version}\n",
+    }
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o755)
+    run("docker", "run", "--rm", "-v", f"{WORK}:/w", BUILDER, "dpkg-deb", "-b", "--root-owner-group", "/w/aircastd-pkg", "/w/aircastd.deb",
+        stdout=subprocess.DEVNULL)
+    deb = WORK / "aircastd.deb"
+    (WORK / "aircastd.deb.sha256").write_text(hashlib.sha256(deb.read_bytes()).hexdigest() + "\n")
+    return deb
+
+
+def update(image, results):
+    print("first boot installs the aircastd the Flasher left on an encrypted card", flush=True)
+    adv = tang_up()
+    card, key = WORK / "card-update.img", secrets.token_hex(24)
+    flash_card(image, card, adv=adv, key=key)
+    fake_aircastd("99.0")
+    mtools(card, "mmd", "::aircast-update")
+    for name in ("aircastd.deb", "aircastd.deb.sha256"):
+        mtools(card, "mcopy", f"/w/{name}", f"::aircast-update/{name}")
+
+    first = boot(card, "", "update-1-first-boot")
+    if not expect(results, "first boot installs the update, then still enrols and reboots",
+                  ENROLLED in first.log and not first.timed_out, "see .work/logs/update-1-first-boot.log"):
+        return
+    expect(results, "the boot log records the install", "aircast-update: installed aircastd 99.0 over none" in boot_log(card),
+           repr(boot_log(card)))
+    expect(results, "aircast-update/ is gone from the card", mtools(card, "mdir", "::aircast-update", check=False).returncode != 0)
+
+    second = boot(card, "aircast.test=1", "update-2")
+    expect_report(results, "the update sits in the read-only root under the overlay", second, luks="yes", lower_aircastd="99.0")
+
+
 def lifecycle(image, results):
     print("encrypted card over Ethernet + recovery key", flush=True)
     adv = tang_up()
@@ -277,7 +321,7 @@ def wifi_card_wired(image, results):
     expect_report(results, "recovery key still unlocks it", third, luks="yes")
 
 
-SCENARIOS = {"lifecycle": lifecycle, "plain": plain, "wifi": wifi_card_wired}
+SCENARIOS = {"lifecycle": lifecycle, "plain": plain, "wifi": wifi_card_wired, "update": update}
 
 
 def main():

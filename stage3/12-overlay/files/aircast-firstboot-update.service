@@ -1,0 +1,12 @@
+[Unit]
+Description=aircast first-boot: install the newer aircastd left on the boot partition
+DefaultDependencies=no
+After=local-fs.target
+Before=basic.target aircast-firstboot-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aircast-firstboot-update.sh
+
+[Install]
+WantedBy=sysinit.target

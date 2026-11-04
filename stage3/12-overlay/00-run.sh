@@ -2,6 +2,8 @@
 
 install -D -m 755 files/aircast-firstboot-data.sh "${ROOTFS_DIR}/usr/local/sbin/aircast-firstboot-data.sh"
 install -D -m 644 files/aircast-firstboot-data.service "${ROOTFS_DIR}/etc/systemd/system/aircast-firstboot-data.service"
+install -D -m 755 files/aircast-firstboot-update.sh "${ROOTFS_DIR}/usr/local/sbin/aircast-firstboot-update.sh"
+install -D -m 644 files/aircast-firstboot-update.service "${ROOTFS_DIR}/etc/systemd/system/aircast-firstboot-update.service"
 
 install -D -m 755 files/initramfs-scripts/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/scripts/local-bottom/aircast-overlay"
 install -D -m 755 files/initramfs-hooks/aircast-overlay "${ROOTFS_DIR}/etc/initramfs-tools/hooks/aircast-overlay"
@@ -23,6 +25,7 @@ on_chroot << 'EOF'
 systemctl disable rpi-resize 2>/dev/null || true
 
 systemctl enable aircast-firstboot-data.service
+systemctl enable aircast-firstboot-update.service
 systemctl enable var-lib-tailscale.mount
 
 update-initramfs -c -k all

@@ -33,13 +33,33 @@ pushing if you add or rename a stage script.
 Iterate with `just build` against your local aircastd build; a full `just build v1.2.3 v0.3.4`
 is only needed to produce something publishable.
 
+## First boot
+
+Two oneshot units from `stage3/12-overlay` run before `basic.target`, in this order:
+
+1. `aircast-firstboot-update` installs a newer aircastd the Flasher left on the boot partition, so
+   a card gets the current aircastd without a new image. The Flasher writes
+   `aircast-update/aircastd.deb` and `aircast-update/aircastd.deb.sha256` (lowercase hex). The
+   package goes in only if the hash matches and its version is strictly newer than the installed
+   one, through apt with every source disabled, so a missing dependency fails before anything is
+   unpacked. `aircast-update/` is deleted whatever the outcome, and one line goes to the journal
+   and, outside fight mode, to `aircast-boot.log` (on an encrypted card the initramfs replaces that
+   file on the next boot). It runs before the reboot below, on the plain root, so the update lands
+   in the image layer under the overlay and survives a factory reset.
+2. `aircast-firstboot-data` creates the data partition, LUKS-enrolled when `aircast-encrypt` is on
+   the boot partition, and reboots into the overlay.
+
+`just test-update` checks the update decisions against real apt and dpkg in a trixie container;
+`test/encryption/run.py update` boots an encrypted card with an update end to end.
+
 ## CI
 
 `.github/workflows/validate.yml` runs on PRs touching `stage**`, `scripts/**`, or `justfile`:
 - `just lint-stage-scripts` — stage script naming
 - `just test-release` — release.sh picks the correct next version
+- `just test-update` — the first-boot aircastd update installs, skips and fails as it should
 
-Run both locally before opening a PR.
+Run them locally before opening a PR.
 
 ## Releases
 

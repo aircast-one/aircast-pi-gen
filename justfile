@@ -77,6 +77,11 @@ release TYPE:
 test-release:
     ./scripts/release_test.sh
 
+# Check the first-boot aircastd update against real apt and dpkg in a trixie container (CI gate)
+[group('test')]
+test-update:
+    ./test/update/run.sh
+
 # Receive a file a Pi sends with kvm-send, through the JetKVM at $JETKVM_URL (--qr reads HDMI instead of USB serial)
 [group('kvm')]
 kvm-recv *ARGS:

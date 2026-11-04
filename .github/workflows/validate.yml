@@ -6,6 +6,7 @@ on:
       - 'stage**'
       - 'scripts/**'
       - 'justfile'
+      - 'test/update/**'
       - '.github/workflows/validate.yml'
   push:
     branches: [lite-arm64]
@@ -13,6 +14,7 @@ on:
       - 'stage**'
       - 'scripts/**'
       - 'justfile'
+      - 'test/update/**'
       - '.github/workflows/validate.yml'
 
 jobs:
@@ -25,3 +27,5 @@ jobs:
         run: just lint-stage-scripts
       - name: Test release versioning
         run: just test-release
+      - name: Test the first-boot aircastd update
+        run: just test-update
