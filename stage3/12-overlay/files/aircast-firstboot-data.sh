@@ -50,7 +50,7 @@ if [ ! -b "$data_part" ]; then
 	exit 0
 fi
 
-ENCRYPT_MARKER="$(findmnt -n -o TARGET -S LABEL=bootfs || true)/aircast-encrypt"
+ENCRYPT_MARKER="$(findmnt -n -f -o TARGET -S LABEL=bootfs || true)/aircast-encrypt"
 if [ "$created" -eq 0 ] && blkid "$data_part" >/dev/null 2>&1 \
 	&& [ ! -f "$ENCRYPT_MARKER" ]; then
 	log "refusing to format $data_part: it already has a filesystem"
