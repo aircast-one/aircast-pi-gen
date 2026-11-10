@@ -1,0 +1,4 @@
+build-essential
+dkms
+python3-opencv
+python3-numpy
