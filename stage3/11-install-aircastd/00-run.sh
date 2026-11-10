@@ -11,6 +11,11 @@ printf '{"issuer":"%s","tokenUrl":"%s/v1/oauth2/token"}\n' "${OAUTH_ISSUER}" "${
 	> "${ROOTFS_DIR}/etc/aircast/oauth.json"
 echo "aircastd: provisioned cloud issuer ${OAUTH_ISSUER} (distribution: ${AIRCAST_DISTRIBUTION:-development})"
 
+AIRCAST_APT_KEY_URL="https://apt.aircast.one/public-key.gpg"
+install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings"
+curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
+	"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
+
 LOCAL_BIN="files/aircastd"
 if [ -f "${LOCAL_BIN}" ]; then
 	echo "aircastd: baking locally-built binary (${LOCAL_BIN}); skipping S3 apt repo"
@@ -24,12 +29,7 @@ fi
 
 AIRCAST_DISTRIBUTION="${AIRCAST_DISTRIBUTION:-development}"
 AIRCAST_APT_CHANNEL="${AIRCAST_APT_CHANNEL:-${AIRCAST_DISTRIBUTION}}"
-AIRCAST_APT_KEY_URL="https://apt.aircast.one/public-key.gpg"
 AIRCAST_APT_BASE="https://apt.aircast.one/aircastd"
-
-install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings"
-curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
-	"${AIRCAST_APT_KEY_URL}" | gpg --dearmor -o "${ROOTFS_DIR}/usr/share/keyrings/aircast.gpg"
 
 echo "deb [signed-by=/usr/share/keyrings/aircast.gpg] ${AIRCAST_APT_BASE} ${AIRCAST_APT_CHANNEL} main" \
 	> "${ROOTFS_DIR}/etc/apt/sources.list.d/aircast.list"
