@@ -9,9 +9,12 @@ MODELS_DIR="/var/lib/aircast/models"
 
 if [ -n "${AIRCASTD_VERSION:-}" ]; then
 	detect_ver="${AIRCASTD_VERSION#v}"
-	detect_pkg="aircast-detect=${detect_ver/-/\~}"
+	detect_ver="${detect_ver/-/\~}"
+	detect_pkg="aircast-detect=${detect_ver}"
+	detect_listed="| ${detect_ver} |"
 else
 	detect_pkg="aircast-detect"
+	detect_listed="| "
 fi
 
 install -d -m 755 "${ROOTFS_DIR}${MODELS_DIR}"
@@ -69,7 +72,7 @@ if [ "\${built}" -eq 0 ] || [ "\${built}" -ne "\${kernels}" ]; then
 	exit 1
 fi
 
-if apt-cache show "${detect_pkg}" >/dev/null 2>&1; then
+if apt-cache madison aircast-detect | grep -qF "${detect_listed}"; then
 	dpkg-divert --local --rename --add /usr/bin/systemctl
 	ln -sf /bin/true /usr/bin/systemctl
 	apt-get install -y --allow-downgrades "${detect_pkg}"
