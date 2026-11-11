@@ -7,6 +7,13 @@ HEF_URL="https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2
 HEF_SHA256="8cf0a6169b4bcecd345c1361db62bfe00d1eeb9c62d287473129e92db38b3986"
 MODELS_DIR="/var/lib/aircast/models"
 
+if [ -n "${AIRCASTD_VERSION:-}" ]; then
+	detect_ver="${AIRCASTD_VERSION#v}"
+	detect_pkg="aircast-detect=${detect_ver/-/\~}"
+else
+	detect_pkg="aircast-detect"
+fi
+
 install -d -m 755 "${ROOTFS_DIR}${MODELS_DIR}"
 install -m 644 files/yolov8m.labels "${ROOTFS_DIR}${MODELS_DIR}/yolov8m.labels"
 curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
@@ -62,10 +69,17 @@ if [ "\${built}" -eq 0 ] || [ "\${built}" -ne "\${kernels}" ]; then
 	exit 1
 fi
 
-if [ -f /etc/systemd/system/aircast-detect.service ]; then
+if apt-cache show "${detect_pkg}" >/dev/null 2>&1; then
+	dpkg-divert --local --rename --add /usr/bin/systemctl
+	ln -sf /bin/true /usr/bin/systemctl
+	apt-get install -y --allow-downgrades "${detect_pkg}"
+	rm -f /usr/bin/systemctl
+	dpkg-divert --local --rename --remove /usr/bin/systemctl
+	systemctl enable aircast-detect.service
+elif [ -f /etc/systemd/system/aircast-detect.service ]; then
 	systemctl enable aircast-detect.service
 else
-	echo "hailo: aircast-detect.service is not in this aircastd build; detection sidecar not enabled"
+	echo "hailo: neither the aircast-detect package nor an aircastd with the detector; detection sidecar not installed"
 fi
 
 python3 -c "import hailo_platform, cv2, numpy; print('hailo: hailo_platform ok, opencv', cv2.__version__)"
