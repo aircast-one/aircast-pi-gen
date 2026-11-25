@@ -191,6 +191,7 @@ jobs:
               -exec sha256sum {} + 2>/dev/null
             echo "RELEASE=trixie"
             echo "CACHE_VERSION=${CACHE_VERSION}"
+            echo "BUILT_ON=$(date -u +%F)"
           } | LC_ALL=C sort | sha256sum | cut -c1-32 )
           CACHE_OBJ="s3://aircast-ci-cache/pi-gen-cache/${{ env.IMG_NAME }}/${CACHE_KEY}.tar.zst"
           echo "cache_obj=$CACHE_OBJ" >> "$GITHUB_OUTPUT"
@@ -241,7 +242,10 @@ jobs:
           echo "Uploading to $CACHE_OBJ ..."
           aws s3 cp cache.tar.zst "$CACHE_OBJ" --no-progress
           rm -f cache.tar.zst
-          echo "Base cache uploaded - subsequent builds on any runner will skip stages 0-2."
+          echo "Base cache uploaded - builds later today on any runner will skip stages 0-2."
+          CACHE_DIR="${CACHE_OBJ%/*}/"
+          aws s3 ls "$CACHE_DIR" | awk '{print $4}' | { grep -vx "${CACHE_OBJ##*/}" || true; } \
+            | xargs -r -I{} aws s3 rm "${CACHE_DIR}{}"
 
       - name: Save apt cache to R2
         if: success() && steps.apt-proxy.outputs.url != ''

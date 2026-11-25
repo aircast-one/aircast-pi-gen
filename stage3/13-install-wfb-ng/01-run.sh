@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-WFB_NG_VERSION="26.8.20.71978-0~trixie"
+WFB_NG_VERSION="26.11.16.42392-0~trixie"
 WFB_NG_KEY_FINGERPRINT="1033488EF8C1C26D3E6DE89B96C08A296DF3F976"
 
 RTL8812AU_COMMIT="6e75916416de1dce5ecd37f824896bebf96aaf8f"
@@ -24,7 +24,7 @@ gpg --show-keys --with-colons /tmp/wfb-ng.asc \
 gpg --dearmor --yes -o /usr/share/keyrings/wfb-ng.gpg /tmp/wfb-ng.asc
 rm -f /tmp/wfb-ng.asc
 
-echo "deb [signed-by=/usr/share/keyrings/wfb-ng.gpg] https://apt.wfb-ng.org/ trixie master" \
+echo "deb [signed-by=/usr/share/keyrings/wfb-ng.gpg] https://apt.wfb-ng.org/ trixie release-26.11" \
 	> /etc/apt/sources.list.d/wfb-ng.list
 
 apt-get update
